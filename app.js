@@ -1723,6 +1723,367 @@ memoPopupEl.addEventListener('drop', e=>{
   files.forEach(attachMemoImage);
 });
 
+// ── DOM helper ──
+function el(tag,cls,attrs){const e=document.createElement(tag);if(cls)e.className=cls;if(attrs)Object.assign(e,attrs);return e;}
+// Enter/Space로도 활성화되는 키보드 핸들러 부착 (div/span 기반 컨트롤 접근성)
+function addKbd(elem,handler){elem.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();handler(e);}};}
+
+// ── Task item builder ──
+function buildTaskItem(dk,task,isSub,parentId,isRepeatInst,originDk,instanceDk,adjusted) {
+  const prioCls = (!isSub && task.priority) ? ' prio-'+task.priority : '';
+  const doneCls=(!isSub&&task.id===_justDoneId)?' just-done':'';
+  if(task.id===_justDoneId)_justDoneId=null;
+  const item=el('div',`task-item${isSub?' sub':''}${prioCls}${doneCls}`);
+  // 드래그(터치) 메타 — 데스크탑 HTML5 DnD와 동일 정보
+  item._task = { dk: isRepeatInst?originDk:dk, id: task.id, isRepeat: !!isRepeatInst, instanceDk: isRepeatInst?instanceDk:null, isSub: !!isSub, parentId: parentId||null, colDk: dk };
+  if(!READ_ONLY && !selectMode) attachTaskTouchDrag(item);
+  const checked=isRepeatInst?isRepeatChecked(task,instanceDk):task.checked;
+  // 다중 선택 모드: 일반(비반복·비하위·비대기) 태스크만 선택 가능
+  const selectable = selectMode && !isSub && !task.pending && !isRepeatInst;
+  let toggleSel = null;
+  if(selectable){
+    const selKey = dk+'|'+task.id;
+    item.classList.add('selectable');
+    if(bulkSelected.has(selKey)) item.classList.add('selected');
+    toggleSel = (e)=>{ if(e&&e.stopPropagation) e.stopPropagation();
+      if(bulkSelected.has(selKey)){ bulkSelected.delete(selKey); item.classList.remove('selected'); }
+      else { bulkSelected.add(selKey); item.classList.add('selected'); }
+      updateBulkBar();
+    };
+    item.onclick = toggleSel;
+  }
+  if(isSub&&!READ_ONLY&&!selectMode){
+    item.draggable=true;
+    item.ondragstart=e=>{
+      e.stopPropagation();
+      e.dataTransfer.setData('application/json',JSON.stringify({sub:true,dk:dk,parentId:parentId,id:task.id}));
+      e.dataTransfer.effectAllowed='move';
+      item.classList.add('dragging');
+    };
+    item.ondragend=e=>{ e.stopPropagation(); item.classList.remove('dragging'); };
+    item.ondragover=e=>{e.preventDefault();e.stopPropagation();item.classList.add('drag-target');};
+    item.ondragleave=()=>item.classList.remove('drag-target');
+    item.ondrop=e=>{
+      e.preventDefault();e.stopPropagation();
+      item.classList.remove('drag-target');
+      try{
+        const data=JSON.parse(e.dataTransfer.getData('application/json'));
+        if(!data||!data.sub||data.id===task.id||data.parentId!==parentId)return;
+        reorderSub(dk,parentId,data.id,task.id);
+      }catch(err){}
+    };
+  }
+  if(!READ_ONLY&&!selectMode){
+    item.draggable=true;
+    item.ondragstart=e=>{
+      e.dataTransfer.setData('application/json',JSON.stringify({dk:isRepeatInst?originDk:dk,id:task.id,isRepeat:!!isRepeatInst,instanceDk:isRepeatInst?instanceDk:null}));
+      e.dataTransfer.effectAllowed='move';
+      item.classList.add('dragging');
+    };
+    item.ondragend=()=>item.classList.remove('dragging');
+    if(!isRepeatInst){
+      item.ondragover=e=>{e.preventDefault();e.stopPropagation();item.classList.add('drag-target');};
+      item.ondragleave=()=>item.classList.remove('drag-target');
+      item.ondrop=e=>{
+        e.preventDefault();e.stopPropagation();
+        item.classList.remove('drag-target');
+        try{
+          const data=JSON.parse(e.dataTransfer.getData('application/json'));
+          if(!data||!data.id||data.id===task.id)return;
+          if(data.dk===dk&&!data.isRepeat){reorderTask(dk,data.id,task.id);}
+          else if(data.isRepeat){
+            askRepeatMoveScope(scope=>{
+              if(scope==='one') moveRepeatInstanceOne(data.dk, data.id, data.instanceDk, dk);
+              else if(scope==='all') moveTask(data.dk, data.id, dk);
+            });
+          }
+          else{ moveTask(data.dk,data.id,dk); }
+        }catch(err){}
+      };
+    }
+  }
+  if(true){
+    const star=el('span',`task-star${task.starred?' on':''}`,{textContent:'★',title:'중요 표시'});
+    const starToggle=e=>{if(selectable){toggleSel(e);return;}e.stopPropagation();toggleStar(isRepeatInst?originDk:dk,task.id);};
+    star.onclick=starToggle; addKbd(star,starToggle);
+    star.setAttribute('role','button'); star.tabIndex=0;
+    star.setAttribute('aria-pressed',task.starred?'true':'false');
+    star.setAttribute('aria-label','중요 표시 전환');
+    item.appendChild(star);
+  }
+  const cbKey=`${isRepeatInst?originDk:dk}|${parentId||''}|${task.id}|${isRepeatInst?instanceDk:''}`;
+  const cb=el('div',`task-cb${checked?' checked':''}${justToggledCb===cbKey?' cb-pop':''}`);
+  if(justToggledCb===cbKey) justToggledCb=null;
+  const cbToggle=e=>{if(selectable){toggleSel(e);return;}e.stopPropagation();justToggledCb=cbKey;if(isRepeatInst){if(isSub)toggleRepeatSub(originDk,parentId,task.id,instanceDk);else toggleRepeatInst(originDk,task.id,instanceDk);}else toggleTask(dk,parentId||task.id,parentId?task.id:null);};
+  cb.onclick=cbToggle; addKbd(cb,cbToggle);
+  cb.setAttribute('role','checkbox'); cb.tabIndex=0;
+  cb.setAttribute('aria-checked',checked?'true':'false');
+  cb.setAttribute('aria-label',(task.text||'할 일')+' 완료');
+  item.appendChild(cb);
+  // 스와이프 제스처(일간·포커스 뷰 전용 — 주간뷰는 가로 스와이프가 날짜 이동이라 제외)
+  // 오른쪽 → 완료 토글, 왼쪽 → 다음 영업일로 미루기
+  if(!isSub && !READ_ONLY && !selectMode && (currentView==='day'||currentView==='focus') && 'ontouchstart' in window){
+    item.classList.add('swipeable');
+    let _swx=0,_swy=0,_swdx=0,_swiping=false;
+    item.addEventListener('touchstart',e=>{
+      if(e.touches.length!==1) return;
+      _swx=e.touches[0].clientX; _swy=e.touches[0].clientY; _swdx=0; _swiping=false;
+    },{passive:true});
+    item.addEventListener('touchmove',e=>{
+      const t=e.touches[0], ddx=t.clientX-_swx, ddy=t.clientY-_swy;
+      if(!_swiping && Math.abs(ddx)>18 && Math.abs(ddx)>Math.abs(ddy)*1.4) _swiping=true;
+      if(_swiping){
+        e.preventDefault();
+        _swdx=Math.max(-120,Math.min(120,ddx));
+        item.style.transform=`translateX(${_swdx}px)`;
+        item.classList.toggle('swipe-right',_swdx>60);
+        item.classList.toggle('swipe-left',_swdx<-60);
+      }
+    },{passive:false});
+    item.addEventListener('touchend',()=>{
+      item.style.transform='';
+      item.classList.remove('swipe-right','swipe-left');
+      if(!_swiping) return;
+      if(_swdx>70){ cbToggle({stopPropagation(){}}); }
+      else if(_swdx<-70){
+        if(!isRepeatInst && (!task.repeat||task.repeat==='none')) postponeTask(dk,task.id);
+        else showUndoToast('반복 일정은 ⋯ 메뉴에서 옮길 수 있어요');
+      }
+    });
+  }
+  const body=el('div','task-body');
+  // text + memo dot (clickable to open memo)
+  const textWrap=el('div','task-text-wrap');
+  if(task.priority){
+    const flagMap={high:'🔴',mid:'🟡',low:'🟢'};
+    textWrap.appendChild(el('span','priority-flag',{textContent:flagMap[task.priority]||''}));
+  }
+  if(task.time){
+    const now=new Date();
+    const nowHM=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    const todayDk=dateKey(today());
+    const isOverdue=!checked&&(dk<todayDk||(dk===todayDk&&task.time<=nowHM));
+    textWrap.appendChild(el('span',`time-badge${isOverdue?' overdue':''}`,{textContent:'⏰'+task.time}));
+  }
+  const txt=el('div',`task-text${checked?' done':''}`,{textContent:task.text});
+  if(task.color) txt.style.color=task.color;
+  textWrap.appendChild(txt);
+  if(true){
+    const hasMemo=!!(task.memo&&task.memo.trim());
+    const memoBtn=el('span',`memo-icon-btn${hasMemo?' has':''}`,{title:hasMemo?'메모 보기/편집':'메모 추가'}); memoBtn.innerHTML='<svg class="ic" width="13" height="13"><use href="#i-note"/></svg>';
+    memoBtn.setAttribute('role','button'); memoBtn.tabIndex=0;
+    const openMemoH=e=>{e.stopPropagation();openMemo(isRepeatInst?originDk:dk,task.id,memoBtn);};
+    memoBtn.onclick=openMemoH; addKbd(memoBtn,openMemoH);
+    textWrap.appendChild(memoBtn);
+    // 본문 탭 → 수정 모달
+    const openEditH=e=>{if(selectable){toggleSel(e);return;}e.stopPropagation();openEdit(dk,task,isRepeatInst,originDk);};
+    textWrap.onclick=openEditH; addKbd(textWrap,openEditH);
+    textWrap.setAttribute('role','button'); textWrap.tabIndex=0;
+    textWrap.setAttribute('aria-label',(task.text||'할 일')+' — 수정');
+  }
+  body.appendChild(textWrap);
+  if(task.by || task.fromTeam){
+    const metaWrap=el('div','task-meta');
+    if(task.by){ metaWrap.appendChild(el('span','task-by',{textContent:'👤'+task.by,title:'등록: '+task.by})); }
+    if(task.fromTeam){ metaWrap.appendChild(el('span','task-fromteam',{textContent:'🤝'+((teamSubs&&teamSubs[task.fromTeam]&&teamSubs[task.fromTeam].name)||task.fromTeam),title:'팀 일정(복사본)'})); }
+    body.appendChild(metaWrap);
+  }
+  if(true){
+    const tags=task.text.match(/#[\w가-힣]+/g);
+    if(tags&&tags.length){
+      const tagWrap=el('div','tag-chips');
+      tags.forEach(tag=>{
+        const chip=el('span','tag-chip',{textContent:tag});
+        chip.onclick=e=>{e.stopPropagation();searchQuery=tag;document.getElementById('searchInput').value=tag;render();};
+        tagWrap.appendChild(chip);
+      });
+      body.appendChild(tagWrap);
+    }
+  }
+  if(((task.memo&&task.memo.trim())||(Array.isArray(task.memoImages)&&task.memoImages.length))){
+    const firstLine=memoPlainText(task.memo).split('\n')[0];
+    const imgCnt=Array.isArray(task.memoImages)?task.memoImages.length:0;
+    const prev=el('div','memo-preview',{textContent:'📝 '+(imgCnt?`📷${imgCnt} `:'')+firstLine,title:'메모 열기'});
+    prev.onclick=e=>{e.stopPropagation();openMemo(isRepeatInst?originDk:dk,task.id,prev);};
+    body.appendChild(prev);
+  }
+  if(!isSub&&task.from){
+    body.appendChild(el('div','from-badge',{textContent:'👤 '+task.from+'님이 보냄'}));
+    if(task.pending&&!READ_ONLY){
+      const ar=el('div','accept-row');
+      const ok=el('button','accept-btn',{innerHTML:'<svg class="ic" width="12" height="12"><use href="#i-check"/></svg> 수락'});
+      ok.onclick=e=>{e.stopPropagation();acceptTask(dk,task.id);};
+      const no=el('button','reject-btn',{innerHTML:'<svg class="ic" width="12" height="12"><use href="#i-x"/></svg> 거절'});
+      no.onclick=e=>{e.stopPropagation();rejectTask(dk,task.id);};
+      ar.appendChild(ok); ar.appendChild(no); body.appendChild(ar);
+    }
+  }
+  if(!isSub&&Array.isArray(task.comments)&&task.comments.length){
+    const cb=el('div','comment-badge',{textContent:`💬 ${task.comments.length}`});
+    cb.onclick=e=>{e.stopPropagation();openComments(dk,task.id,isRepeatInst,originDk);};
+    body.appendChild(cb);
+  }
+  if(!isSub&&adjusted){
+    body.appendChild(el('div','repeat-adjusted-badge',{textContent:'📅 휴일이라 다음 영업일로'}));
+  }
+  if(!isSub&&Array.isArray(task.subs)&&task.subs.length){
+    const subChecked=s=>isRepeatInst?isRepeatChecked(s,instanceDk):(s&&s.checked);
+    const subDone=task.subs.filter(s=>s&&subChecked(s)).length;
+    const subPct=Math.round(subDone/task.subs.length*100);
+    const pbWrap=el('div','subprog');
+    pbWrap.appendChild(el('span','checklist-badge',{textContent:`✓ ${subDone}/${task.subs.length}`}));
+    const bar=el('div','subprog-bar'); const fill=el('div','subprog-fill'); fill.style.width=subPct+'%';
+    if(subPct===100)fill.classList.add('done');
+    bar.appendChild(fill); pbWrap.appendChild(bar);
+    body.appendChild(pbWrap);
+    const sl=el('div','subtask-list');
+    task.subs.forEach(s=>sl.appendChild(buildTaskItem(isRepeatInst?originDk:dk,s,true,task.id,isRepeatInst,originDk,instanceDk)));
+    body.appendChild(sl);
+  }
+  if(!isSub){
+    const addSub=el('button','add-sub-btn',{textContent:'+ 하위 항목'});
+    addSub.onclick=e=>{e.stopPropagation();activeInput={dateKey:dk,dataKey:isRepeatInst?originDk:dk,parentId:task.id};render();};
+    body.appendChild(addSub);
+  }
+  item.appendChild(body);
+
+  if(isSub){
+    // 하위 항목: 인라인 삭제 버튼만 (기능 버튼 없음 → 텍스트 폭 확보)
+    const actions=el('div','task-actions');
+    const delBtn=el('button','task-act-btn del',{textContent:'✕',title:'삭제'});
+    delBtn.setAttribute('aria-label',(task.text||'하위 항목')+' 삭제');
+    delBtn.onclick=e=>{
+      e.stopPropagation();
+      if(confirm('삭제할까요?')){ deleteTask(isRepeatInst?originDk:dk,parentId,task.id); }
+    };
+    actions.appendChild(delBtn);
+    item.appendChild(actions);
+    return item;
+  }
+
+  // 상위 항목: 기능 아이콘들을 ⋯ 트레이(드롭다운)로 모아 가로 공간 확보
+  const actionsWrap=el('div','task-actions-wrap');
+  const moreBtn=el('button','task-more-btn',{title:'작업 메뉴'}); moreBtn.innerHTML='<svg class="ic" width="15" height="15"><use href="#i-more"/></svg>';
+  moreBtn.setAttribute('aria-label','작업 메뉴 열기');
+  const tray=el('div','task-actions-tray hidden');
+  const closeTray=()=>tray.classList.add('hidden');
+  const trayItem=(icon,label,extraCls,handler)=>{
+    const b=el('button',`tray-item${extraCls?' '+extraCls:''}`,{type:'button'});
+    const _ti=el('span','tray-ico'); _ti.innerHTML=`<svg class="ic" width="14" height="14"><use href="#i-${icon}"/></svg>`; b.appendChild(_ti);
+    b.appendChild(el('span',null,{textContent:label}));
+    b.onclick=e=>{e.stopPropagation();closeTray();handler(e);};
+    tray.appendChild(b);
+    return b;
+  };
+  trayItem('timer','포모도로 시작',null,()=>startPomodoroForTask(task.text));
+  trayItem('pencil','수정',null,()=>openEdit(dk,task,isRepeatInst,originDk));
+  trayItem('calendar','다른 날짜로 이동',null,()=>{
+    openMovePopup(actionsWrap, dk, task.id, isRepeatInst?{isRepeatInst:true, originDk, instanceDk}:null);
+  });
+  if(!isRepeatInst) trayItem('skip','다음 영업일로 미루기',null,()=>postponeTask(dk,task.id));
+  trayItem('msg','댓글',null,()=>openComments(dk,task.id,isRepeatInst,originDk));
+  if(navigator.share) trayItem('share','공유하기',null,()=>{
+    const d=parseDk(dk);
+    navigator.share({title:'마이플래너',text:`[${d.getMonth()+1}/${d.getDate()}]${task.time?' '+task.time:''} ${task.text}`}).catch(()=>{});
+  });
+  trayItem('x','삭제','del',()=>{
+    if(isRepeatInst||(task.repeat&&task.repeat!=='none')){
+      openRepeatDel(isRepeatInst?originDk:dk, task.id, dk);
+    } else if(confirm('삭제할까요?')) {
+      deleteTask(isRepeatInst?originDk:dk,task.id,null);
+    }
+  });
+  moreBtn.onclick=e=>{
+    e.stopPropagation();
+    closeMovePopup();
+    const willOpen=tray.classList.contains('hidden');
+    document.querySelectorAll('.task-actions-tray:not(.hidden)').forEach(t=>t.classList.add('hidden'));
+    if(willOpen){
+      tray.classList.remove('hidden');
+      setTimeout(()=>document.addEventListener('click',closeTray,{once:true}),0);
+    }
+  };
+  actionsWrap.appendChild(moreBtn);
+  actionsWrap.appendChild(tray);
+  item.appendChild(actionsWrap);
+  return item;
+}
+
+// ── Input form builder ──
+function buildInputForm(dk,parentId){
+  let selColor=null,starred=false,selRepeat='none',selPriority=null;
+  let timeInp=null;
+  const form=el('div','input-form');
+  const row=el('div','input-row');
+  const inp=el('input','task-input');
+  inp.type='text';inp.placeholder=parentId?'할 일 입력...':'할 일 입력... (예: 내일 3시 회의)';inp.id=`inp-${dk}-${parentId||'main'}`;
+  row.appendChild(inp);
+  if(!parentId){
+    const sb=el('button','star-toggle',{type:'button',textContent:'★'});
+    sb.onclick=()=>{starred=!starred;sb.classList.toggle('on',starred);};
+    row.appendChild(sb);
+  }
+  form.appendChild(row);
+  if(!parentId){
+    const cp=el('div','color-picker');
+    const none=el('div','cp-dot selected');none.style.background='#e8eaed';none.title='없음';
+    none.onclick=()=>{selColor=null;cp.querySelectorAll('.cp-dot').forEach(d=>d.classList.remove('selected'));none.classList.add('selected');};
+    cp.appendChild(none);
+    COLORS.forEach(c=>{
+      const dot=el('div','cp-dot');dot.style.background=c.hex;dot.title=c.name;
+      dot.onclick=()=>{selColor=c.hex;cp.querySelectorAll('.cp-dot').forEach(d=>d.classList.remove('selected'));dot.classList.add('selected');};
+      cp.appendChild(dot);
+    });
+    form.appendChild(cp);
+    const psRow=el('div','add-field-row');
+    psRow.appendChild(el('span','add-field-label',{textContent:'중요도'}));
+    const ps=el('div','priority-selector');
+    [['high','🔴'],['mid','🟡'],['low','🟢']].forEach(([val,icon])=>{
+      const btn=el('button','priority-opt',{type:'button',textContent:icon,title:val});
+      btn.onclick=()=>{
+        selPriority=selPriority===val?null:val;
+        ps.querySelectorAll('.priority-opt').forEach(b=>b.classList.remove('active'));
+        if(selPriority)btn.classList.add('active');
+      };
+      ps.appendChild(btn);
+    });
+    psRow.appendChild(ps);
+    form.appendChild(psRow);
+    const rs=el('div','repeat-selector');
+    [['none','없음'],['daily','매일'],['weekdays','매 영업일'],['weekly','매주'],['biweekly','격주'],['monthly','매월'],['monthlyNth','N째요일'],['monthlyFirstBiz','월초영업일'],['monthlyLastBiz','월말영업일']].forEach(([val,label])=>{
+      const btn=el('button',`repeat-opt${val==='none'?' active':''}`,{type:'button',textContent:label});
+      btn.onclick=()=>{selRepeat=val;rs.querySelectorAll('.repeat-opt').forEach(b=>b.classList.remove('active'));btn.classList.add('active');};
+      rs.appendChild(btn);
+    });
+    form.appendChild(rs);
+    const timeRow=el('div','time-row');
+    timeRow.appendChild(el('span','time-row-label',{textContent:'⏰ 마감시간'}));
+    timeInp=el('input','time-input');timeInp.type='time';
+    timeRow.appendChild(timeInp);
+    form.appendChild(timeRow);
+  }
+  const acts=el('div','form-actions');
+  const addBtn=el('button','btn-add',{type:'button',textContent:'추가'});
+  const cancelBtn=el('button','btn-cancel',{type:'button',textContent:'취소'});
+  addBtn.onclick=()=>{
+    let v=inp.value.trim();
+    if(!v){activeInput=null;render();return;}
+    let targetDk=dk;
+    let parsedTime=null;
+    if(!parentId){
+      const parsed=parseQuickDate(v);
+      if(parsed&&parsed.text){ v=parsed.text; targetDk=dateKey(parsed.date); }
+      const pt=parseQuickTime(v);
+      if(pt&&pt.text){ v=pt.text; parsedTime=pt.time; }
+    }
+    addTask(targetDk,v,selColor,starred,selRepeat,parentId,selPriority,(timeInp&&timeInp.value)||parsedTime||null);
+  };
+  cancelBtn.onclick=()=>{activeInput=null;render();};
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter')addBtn.click();if(e.key==='Escape')cancelBtn.click();});
+  acts.appendChild(addBtn);acts.appendChild(cancelBtn);form.appendChild(acts);
+  return form;
+}
+
 // ── Day column ──
 function buildDayCol(date,dayIdx){
   const dk=dateKey(date);
