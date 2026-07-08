@@ -1861,7 +1861,6 @@ function buildTaskItem(dk,task,isSub,parentId,isRepeatInst,originDk,instanceDk,a
     star.setAttribute('aria-label','중요 표시 전환');
     item.appendChild(star);
   }
-  if(task.color){const dot=el('div','color-dot');dot.style.background=task.color;item.appendChild(dot);}
   const cbKey=`${isRepeatInst?originDk:dk}|${parentId||''}|${task.id}|${isRepeatInst?instanceDk:''}`;
   const cb=el('div',`task-cb${checked?' checked':''}${justToggledCb===cbKey?' cb-pop':''}`);
   if(justToggledCb===cbKey) justToggledCb=null;
@@ -1917,6 +1916,7 @@ function buildTaskItem(dk,task,isSub,parentId,isRepeatInst,originDk,instanceDk,a
     textWrap.appendChild(el('span',`time-badge${isOverdue?' overdue':''}`,{textContent:'⏰'+task.time}));
   }
   const txt=el('div',`task-text${checked?' done':''}`,{textContent:task.text});
+  if(task.color) txt.style.color=task.color;
   textWrap.appendChild(txt);
   if(true){
     const hasMemo=!!(task.memo&&task.memo.trim());
