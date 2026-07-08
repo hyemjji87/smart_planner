@@ -1957,15 +1957,6 @@ function buildTaskItem(dk,task,isSub,parentId,isRepeatInst,originDk,instanceDk,a
     prev.onclick=e=>{e.stopPropagation();openMemo(isRepeatInst?originDk:dk,task.id,prev);};
     body.appendChild(prev);
   }
-  if(task.repeat&&task.repeat!=='none'){
-    const repeatLabels={daily:'🔄 매일',weekdays:'🔄 평일',weekly:'🔄 매주',biweekly:'🔄 격주',monthly:'🔄 매월',monthlyNth:'🔄 N째 요일',monthlyFirstBiz:'🔄 월초 영업일',monthlyLastBiz:'🔄 월말 영업일'};
-    let repLabel=repeatLabels[task.repeat]||'🔄';
-    if(task.repeat==='monthlyNth'){
-      const od=new Date(originDk||dk);
-      repLabel=`🔄 매월 ${Math.ceil(od.getDate()/7)}째 ${'일월화수목금토'[od.getDay()]}요일`;
-    }
-    body.appendChild(el('div','repeat-badge',{textContent:repLabel}));
-  }
   if(!isSub&&task.from){
     body.appendChild(el('div','from-badge',{textContent:'👤 '+task.from+'님이 보냄'}));
     if(task.pending&&!READ_ONLY){
@@ -3029,10 +3020,8 @@ document.getElementById('darkBtn').onclick=()=>{
 (()=>{
   const applyTheme=t=>{document.documentElement.dataset.theme=t;document.getElementById('darkBtn').innerHTML=`<svg class="ic" width="16" height="16"><use href="#i-${t==='dark'?'sun':'moon'}"/></svg>`;};
   const stored=localStorage.getItem('theme');
-  const sysDark=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)');
-  // 수동 설정이 없으면 시스템 테마를 따르고, 시스템이 바뀌면 실시간 반영
-  applyTheme(stored||(sysDark&&sysDark.matches?'dark':'light'));
-  if(sysDark&&sysDark.addEventListener) sysDark.addEventListener('change',e=>{ if(!localStorage.getItem('theme')) applyTheme(e.matches?'dark':'light'); });
+  // 수동 설정이 없으면 기본값은 다크모드
+  applyTheme(stored||'dark');
 })();
 
 // ── More menu dropdown ──
