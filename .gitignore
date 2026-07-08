@@ -1,0 +1,5 @@
+.python/
+.vscode/
+.agents/
+github-deploy-key.json
+.env
