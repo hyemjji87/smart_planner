@@ -1321,7 +1321,6 @@ const GUIDE_SECTIONS=[
     ['📅','주간','기본 화면이에요. 한 주를 한눈에 관리해요.'],
     ['🗓','월간','한 달 전체를 볼 수 있어요. 날짜를 누르면 주간 화면으로 이동해요.'],
     ['📆','연간','12개월 달력이에요. 점이 있으면 할 일이 있는 날이에요.'],
-    ['📊','타임라인','할 일을 가로 막대로 보여줘요. 반복 패턴이 잘 보여요.'],
     ['🎯','포커스','오늘 할 일과 밀린 일만 모아서 보여줘요.'],
   ]},
   { title:'✏️ 입력 꿀팁', items:[
@@ -1376,11 +1375,6 @@ const GUIDE_SECTIONS=[
     ['F','포커스','포커스 모드로 전환해요.'],
     ['/','검색','검색창으로 이동해요.'],
     ['D','다크모드','테마를 바꿔요.'],
-  ]},
-  { title:'📈 대시보드', items:[
-    ['📊','이번 주','완료 수, 달성률, 연속 기록을 보여줘요.'],
-    ['⭐','중요 일정','곧 다가오는 중요 일정을 보여줘요.'],
-    ['📈','통계','최근 8주 완료율 추이를 볼 수 있어요.'],
   ]},
 ];
 // 가이드 이모지 → SVG 아이콘 매핑 (매핑 없는 것만 이모지 유지 — 색 점 🔴 등 의미 있는 것)
@@ -2036,7 +2030,7 @@ function buildTaskItem(dk,task,isSub,parentId,isRepeatInst,originDk,instanceDk,a
     task.subs.forEach(s=>sl.appendChild(buildTaskItem(isRepeatInst?originDk:dk,s,true,task.id,isRepeatInst,originDk,instanceDk)));
     body.appendChild(sl);
   }
-  if(true){
+  if(!isSub){
     const addSub=el('button','add-sub-btn',{textContent:'+ 하위 항목'});
     addSub.onclick=e=>{e.stopPropagation();activeInput={dateKey:dk,dataKey:isRepeatInst?originDk:dk,parentId:task.id};render();};
     body.appendChild(addSub);
@@ -2295,10 +2289,12 @@ function buildDayCol(date,dayIdx){
   // header
   const hdr=el('div','day-header');
   hdr.appendChild(el('div','day-name',{textContent:DAY_NAMES[dayIdx]+'요일'}));
-  const nw=el('div','day-num-wrap');
-  nw.appendChild(el('div','day-num',{textContent:date.getDate()}));
-  hdr.appendChild(nw);
-  hdr.appendChild(el('div','day-month',{textContent:`${date.getMonth()+1}월`}));
+  if(currentView!=='week'){
+    const nw=el('div','day-num-wrap');
+    nw.appendChild(el('div','day-num',{textContent:date.getDate()}));
+    hdr.appendChild(nw);
+    hdr.appendChild(el('div','day-month',{textContent:`${date.getMonth()+1}월`}));
+  }
   if(holiday) hdr.appendChild(el('div','holiday-label',{textContent:(HOLIDAYS[dk]?'🎌 ':'🏖 ')+holiday}));
   if(!READ_ONLY){
     const offBtn=el('button','offday-btn',{textContent:isOff?'🏖 휴무 해제':'🏖 휴무일',title:isOff?'휴무일 해제':'휴무일로 지정 — 이 날의 할 일은 다음 영업일로 이동'});
@@ -2383,88 +2379,6 @@ function buildDayCol(date,dayIdx){
   }
   col.appendChild(buildWeatherBar(dk));
   return col;
-}
-
-// ── 시간표(타임블로킹) 뷰 ──
-function buildTimeblockView(){
-  const wrap=el('div','timeblock-wrap');
-  const dk=dateKey(dayDate);
-  const dayIdx=dateToDayIdx(dayDate);
-  // 그 날의 모든 항목 수집 (직접+반복)
-  const items=[];
-  tasksForDate(dayDate,dayIdx).forEach(e=>{ if(matchesQuery(e.task)) items.push({t:e.task,isRepeat:e.isRepeat,originDk:e.originDk,instanceDk:e.instanceDk}); });
-  const timed=items.filter(x=>x.t.time).sort((a,b)=>a.t.time<b.t.time?-1:1);
-  const untimed=items.filter(x=>!x.t.time);
-
-  const START_H=6, END_H=24, HOUR_PX=52;
-  const grid=el('div','tb-grid');
-  // 시간 눈금
-  const axis=el('div','tb-axis');
-  for(let h=START_H;h<END_H;h++){
-    const row=el('div','tb-hour');
-    row.style.height=HOUR_PX+'px';
-    row.appendChild(el('span','tb-hour-label',{textContent:`${String(h).padStart(2,'0')}:00`}));
-    axis.appendChild(row);
-  }
-  grid.appendChild(axis);
-  // 일정 레인
-  const lane=el('div','tb-lane');
-  lane.style.height=(END_H-START_H)*HOUR_PX+'px';
-  // 시간선 (지금)
-  if(dk===todayKey()){
-    const now=new Date();
-    const mins=(now.getHours()*60+now.getMinutes())-START_H*60;
-    if(mins>=0&&mins<=(END_H-START_H)*60){
-      const nl=el('div','tb-nowline'); nl.style.top=(mins/60*HOUR_PX)+'px';
-      nl.appendChild(el('span','tb-now-label',{textContent:'지금'}));
-      lane.appendChild(nl);
-    }
-  }
-  // 겹침 감지용
-  const placed=[];
-  timed.forEach(({t,isRepeat,originDk,instanceDk})=>{
-    const [hh,mm]=t.time.split(':').map(Number);
-    const startMin=hh*60+mm-START_H*60;
-    if(startMin<0||startMin>(END_H-START_H)*60) return;
-    const dur=+t.duration||30;
-    const checked=isRepeat?isRepeatChecked(t,instanceDk):t.checked;
-    const blk=el('div',`tb-block${checked?' done':''}`);
-    blk.style.top=(startMin/60*HOUR_PX)+'px';
-    blk.style.height=Math.max(20,dur/60*HOUR_PX-3)+'px';
-    if(t.color)blk.style.borderLeftColor=t.color;
-    // 겹침 → 가로 분할
-    const endMin=startMin+dur;
-    const overlaps=placed.filter(p=>startMin<p.end&&endMin>p.start);
-    const col=overlaps.length;
-    blk.style.left=`calc(${col*48}px + 2px)`;
-    if(col>0)blk.classList.add('tb-overlap');
-    placed.push({start:startMin,end:endMin});
-    blk.appendChild(el('div','tb-block-time',{textContent:t.time+(t.duration?`~${addMin(t.time,dur)}`:'')}));
-    blk.appendChild(el('div','tb-block-text',{textContent:t.text}));
-    blk.onclick=()=>openEdit(dk,t,isRepeat,originDk);
-    lane.appendChild(blk);
-  });
-  grid.appendChild(lane);
-  wrap.appendChild(grid);
-
-  // 시간 미지정 항목
-  if(untimed.length){
-    const ut=el('div','tb-untimed');
-    ut.appendChild(el('div','tb-untimed-title',{innerHTML:'<svg class="ic" width="12" height="12"><use href="#i-clock"/></svg> 시간 미지정'}));
-    const ul=el('div','tasks-list');
-    untimed.forEach(({t,isRepeat,originDk,instanceDk})=>ul.appendChild(buildTaskItem(dk,t,false,null,isRepeat,originDk,instanceDk)));
-    ut.appendChild(ul);
-    wrap.appendChild(ut);
-  }
-  if(!items.length){
-    wrap.appendChild(el('div','focus-empty',{textContent:'이 날 일정이 없어요 — 시간을 지정하면 여기 블록으로 표시돼요'}));
-  }
-  return wrap;
-}
-function addMin(time,min){
-  const [h,m]=time.split(':').map(Number);
-  const tot=h*60+m+min;
-  return `${String(Math.floor(tot/60)%24).padStart(2,'0')}:${String(tot%60).padStart(2,'0')}`;
 }
 
 // ── Focus view (오늘 포커스) ──
@@ -2652,82 +2566,6 @@ function buildYearMonth(year,month){
   box.appendChild(grid);
   box.onclick=()=>{monthDate=new Date(year,month,1);setView('month');};
   return box;
-}
-
-// ── Timeline (간트) view ──
-function buildTimelineView(){
-  const wrap=el('div','gantt-wrap');
-  const year=monthDate.getFullYear(),month=monthDate.getMonth();
-  const daysInMonth=new Date(year,month+1,0).getDate();
-  // 이번 달 모든 할 일 수집 (반복 일정은 한 행으로 합침)
-  const repRows={},rows=[];
-  for(let d=1;d<=daysInMonth;d++){
-    const date=new Date(year,month,d);
-    const dk=dateKey(date);
-    visibleStored(dk).forEach(t=>{
-      if(!t||!matchesQuery(t))return;
-      if(t.repeat&&t.repeat!=='none'){
-        if(!repRows[t.id])repRows[t.id]={task:t,cells:[]};
-        repRows[t.id].cells.push({d,checked:t.checked,date});
-      } else rows.push({task:t,cells:[{d,checked:t.checked,date}]});
-    });
-    try{
-      getRepeatTasksForDate(date,dateToDayIdx(date)).forEach(({task,instanceDk})=>{
-        if(!matchesQuery(task))return;
-        if(!repRows[task.id])repRows[task.id]={task,cells:[]};
-        repRows[task.id].cells.push({d,checked:isRepeatChecked(task,instanceDk),date});
-      });
-    }catch(e){}
-  }
-  const allRows=[...rows,...Object.values(repRows)].sort((a,b)=>a.cells[0].d-b.cells[0].d);
-  if(!allRows.length){
-    wrap.appendChild(el('div','search-empty',{textContent:'이번 달 할 일이 없어요'}));
-    return wrap;
-  }
-  const scroller=el('div','gantt-scroller');
-  const gridTemplate=`minmax(150px,200px) repeat(${daysInMonth},minmax(22px,1fr))`;
-  const todayDk=dateKey(today());
-  // 헤더 (날짜)
-  const hdr=el('div','gantt-row gantt-header');
-  hdr.style.gridTemplateColumns=gridTemplate;
-  hdr.appendChild(el('div','gantt-name-cell gantt-hdr-cell',{textContent:'할 일'}));
-  for(let d=1;d<=daysInMonth;d++){
-    const date=new Date(year,month,d);
-    const isWeekend=date.getDay()===0||date.getDay()===6;
-    const isToday=dateKey(date)===todayDk;
-    const c=el('div',`gantt-hdr-cell gantt-day-num${isWeekend?' weekend':''}${isToday?' is-today':''}`,{textContent:d});
-    hdr.appendChild(c);
-  }
-  scroller.appendChild(hdr);
-  // 행
-  allRows.forEach(({task,cells})=>{
-    const row=el('div','gantt-row');
-    row.style.gridTemplateColumns=gridTemplate;
-    const name=el('div','gantt-name-cell');
-    if(task.color){const dot=el('span','color-dot');dot.style.background=task.color;dot.style.marginTop='0';name.appendChild(dot);}
-    const isRepeat=task.repeat&&task.repeat!=='none';
-    name.appendChild(el('span','gantt-name-text',{textContent:(task.starred?'★ ':'')+(isRepeat?'🔄 ':'')+task.text}));
-    name.onclick=()=>{weekStart=getMonday(cells[0].date);setView('week');};
-    row.appendChild(name);
-    const cellMap={};cells.forEach(c=>cellMap[c.d]=c);
-    for(let d=1;d<=daysInMonth;d++){
-      const date=new Date(year,month,d);
-      const isWeekend=date.getDay()===0||date.getDay()===6;
-      const isToday=dateKey(date)===todayDk;
-      const cell=el('div',`gantt-cell${isWeekend?' weekend':''}${isToday?' is-today':''}`);
-      if(cellMap[d]){
-        const bar=el('div',`gantt-bar${cellMap[d].checked?' done':''}`);
-        if(task.color)bar.style.background=task.color;
-        bar.title=`${month+1}/${d} · ${task.text}${cellMap[d].checked?' (완료)':''}`;
-        bar.onclick=()=>{weekStart=getMonday(cellMap[d].date);setView('week');};
-        cell.appendChild(bar);
-      }
-      row.appendChild(cell);
-    }
-    scroller.appendChild(row);
-  });
-  wrap.appendChild(scroller);
-  return wrap;
 }
 
 // ── Search ──
@@ -2997,9 +2835,9 @@ function render(){
   if(currentView==='week'){
     const end=new Date(weekStart);end.setDate(end.getDate()+6);
     document.getElementById('weekLabel').textContent=`${weekStart.getFullYear()}년 ${weekStart.getMonth()+1}월 ${weekStart.getDate()}일 ~ ${end.getMonth()+1}월 ${end.getDate()}일`;
-  } else if(currentView==='month'||currentView==='timeline') {
+  } else if(currentView==='month') {
     document.getElementById('weekLabel').textContent=`${monthDate.getFullYear()}년 ${monthDate.getMonth()+1}월`;
-  } else if(currentView==='day'||currentView==='timeblock') {
+  } else if(currentView==='day') {
     document.getElementById('weekLabel').textContent=`${dayDate.getFullYear()}년 ${dayDate.getMonth()+1}월 ${dayDate.getDate()}일 (${DAY_NAMES[dateToDayIdx(dayDate)]})`;
   } else if(currentView==='year') {
     document.getElementById('weekLabel').textContent=`${yearNum}년`;
@@ -3016,10 +2854,6 @@ function render(){
     view.appendChild(buildDayView());
   } else if(currentView==='year'){
     view.appendChild(buildYearView());
-  } else if(currentView==='timeline'){
-    view.appendChild(buildTimelineView());
-  } else if(currentView==='timeblock'){
-    view.appendChild(buildTimeblockView());
   } else if(currentView==='week'){
     const tagBar=buildTagFilterBar(); if(tagBar) view.appendChild(tagBar);
     const wrap=el('div','calendar-wrap');
@@ -3110,15 +2944,15 @@ function render(){
 // ── Nav ──
 document.getElementById('prevBtn').onclick=()=>{
   if(currentView==='week')weekStart.setDate(weekStart.getDate()-7);
-  else if(currentView==='month'||currentView==='timeline')monthDate.setMonth(monthDate.getMonth()-1);
-  else if(currentView==='day'||currentView==='timeblock')dayDate.setDate(dayDate.getDate()-1);
+  else if(currentView==='month')monthDate.setMonth(monthDate.getMonth()-1);
+  else if(currentView==='day')dayDate.setDate(dayDate.getDate()-1);
   else if(currentView==='year')yearNum--;
   _navDir='prev'; render();
 };
 document.getElementById('nextBtn').onclick=()=>{
   if(currentView==='week')weekStart.setDate(weekStart.getDate()+7);
-  else if(currentView==='month'||currentView==='timeline')monthDate.setMonth(monthDate.getMonth()+1);
-  else if(currentView==='day'||currentView==='timeblock')dayDate.setDate(dayDate.getDate()+1);
+  else if(currentView==='month')monthDate.setMonth(monthDate.getMonth()+1);
+  else if(currentView==='day')dayDate.setDate(dayDate.getDate()+1);
   else if(currentView==='year')yearNum++;
   _navDir='next'; render();
 };
@@ -3126,7 +2960,7 @@ document.getElementById('todayBtn').onclick=()=>{
   weekStart=getMonday(new Date()); monthDate=new Date(); monthDate.setDate(1);
   dayDate=today(); yearNum=new Date().getFullYear(); render();
 };
-const VIEW_BTNS={day:'btnDay',week:'btnWeek',month:'btnMonth',timeblock:'btnTimeblock',year:'btnYear',timeline:'btnTimeline',focus:'btnFocus',matrix:'btnMatrix'};
+const VIEW_BTNS={day:'btnDay',week:'btnWeek',month:'btnMonth',year:'btnYear',focus:'btnFocus',matrix:'btnMatrix'};
 
 // ── 아이젠하워 매트릭스 뷰 — 중요×긴급 4분면 (긴급=오늘까지/지연, 중요=별표·높음) ──
 function buildMatrixView(){
@@ -3191,7 +3025,7 @@ Object.entries(VIEW_BTNS).forEach(([view,id])=>{document.getElementById(id).oncl
   const nav=document.getElementById('mobileNav'); if(!nav) return;
   const sheet=document.getElementById('mnavSheet');
   const moreBtn=document.getElementById('mnavMore');
-  const SHEET_VIEWS=['year','timeblock','timeline','matrix'];
+  const SHEET_VIEWS=['year','matrix'];
   const syncActive=()=>{
     nav.querySelectorAll('.mnav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===currentView));
     moreBtn.classList.toggle('active',SHEET_VIEWS.includes(currentView));
@@ -5356,470 +5190,6 @@ function showUpdateBanner(){
   document.body.appendChild(bar);
 }
 
-// ── Dashboard ──
-function getImportantUpcoming(){
-  const now = today();
-  const items = [];
-  Object.entries(tasks).forEach(([dk,list])=>{
-    if(!Array.isArray(list)) return;
-    const d = parseDk(dk); d.setHours(0,0,0,0);
-    if(d < now) return;
-    list.forEach(t=>{
-      if(!t||t.checked) return;
-      if(t.starred||t.priority==='high'){
-        items.push({text:t.text, dk, dday:Math.round((d-now)/86400000), priority:t.priority, starred:t.starred});
-      }
-    });
-  });
-  return items.sort((a,b)=>a.dday-b.dday).slice(0,5);
-}
-
-function buildDashStats(){
-  const panel = document.getElementById('dashStats');
-  panel.innerHTML = '';
-  const title = document.createElement('div'); title.className='dash-panel-title'; title.innerHTML='<svg class="ic" width="13" height="13"><use href="#i-gantt"/></svg> 이번 주 업무 현황';
-  panel.appendChild(title);
-
-  // stat boxes
-  const now = new Date(); now.setHours(0,0,0,0);
-  const monday = new Date(now); monday.setDate(now.getDate() - ((now.getDay()+6)%7));
-  let weekTotal=0, weekDone=0, totalAll=0, doneAll=0;
-  const dayTotals = [0,0,0,0,0,0,0];
-  Object.entries(tasks).forEach(([dk, list])=>{
-    if(!Array.isArray(list)) return;
-    list.forEach(t=>{
-      if(!t) return;
-      totalAll++; if(t.checked) doneAll++;
-      // 반복 태스크는 아래 루프에서 인스턴스로 집계하므로 주간 버킷에서 제외(이중집계 방지)
-      if(t.repeat && t.repeat!=='none') return;
-      const d = parseDk(dk); d.setHours(0,0,0,0);
-      const diff = Math.round((d-monday)/86400000);
-      if(diff>=0 && diff<7){ weekTotal++; if(t.checked) weekDone++; dayTotals[diff]+=1; }
-    });
-  });
-  // 이번 주 반복 인스턴스 포함
-  for(let i=0;i<7;i++){
-    const d=new Date(monday); d.setDate(d.getDate()+i);
-    try{
-      getRepeatTasksForDate(d,i).forEach(({task,instanceDk})=>{
-        weekTotal++; if(isRepeatChecked(task,instanceDk)) weekDone++; dayTotals[i]+=1;
-      });
-    }catch(e){}
-  }
-  const streak = (()=>{
-    let s=0, d=new Date(now);
-    for(let i=0;i<60;i++){
-      const dk=dateKey(d);
-      const list=tasks[dk];
-      if(Array.isArray(list)&&list.length&&list.every(t=>t&&t.checked)) s++;
-      else if(i>0) break;
-      d.setDate(d.getDate()-1);
-    }
-    return s;
-  })();
-
-  const sg = document.createElement('div'); sg.className='stat-grid';
-  [[weekDone+'/'+weekTotal,'이번 주 완료'],[Math.round(totalAll?doneAll/totalAll*100:0)+'%','전체 달성률'],[streak+'일','완료 연속']].forEach(([n,l])=>{
-    const box=document.createElement('div'); box.className='stat-box';
-    const num=document.createElement('div'); num.className='stat-num'; num.textContent=n;
-    const lab=document.createElement('div'); lab.className='stat-label'; lab.textContent=l;
-    box.appendChild(num); box.appendChild(lab); sg.appendChild(box);
-  });
-  panel.appendChild(sg);
-
-  // week bar chart
-  const barTitle=document.createElement('div'); barTitle.className='dash-panel-title'; barTitle.style.marginBottom='6px'; barTitle.textContent='요일별 태스크';
-  panel.appendChild(barTitle);
-  const barWrap=document.createElement('div'); barWrap.className='week-bar-wrap';
-  const max=Math.max(...dayTotals,1);
-  ['월','화','수','목','금','토','일'].forEach((d,i)=>{
-    const col=document.createElement('div'); col.className='week-bar-col';
-    const bar=document.createElement('div'); bar.className='week-bar'+(i===((now.getDay()+6)%7)?' today':'');
-    bar.style.height=Math.round((dayTotals[i]/max)*50+4)+'px';
-    const lbl=document.createElement('div'); lbl.className='week-bar-day'; lbl.textContent=d;
-    col.appendChild(bar); col.appendChild(lbl); barWrap.appendChild(col);
-  });
-  panel.appendChild(barWrap);
-
-  // 완료 히트맵 — 최근 12주, 하루 완료 수를 초록 농도로 (GitHub 잔디 스타일)
-  {
-    const hmTitle=document.createElement('div'); hmTitle.className='dash-panel-title';
-    hmTitle.style.cssText='margin-top:14px;margin-bottom:6px'; hmTitle.textContent='최근 12주 완료 기록';
-    panel.appendChild(hmTitle);
-    const doneMap={};
-    Object.entries(tasks).forEach(([dk,list])=>{
-      if(!Array.isArray(list)) return;
-      list.forEach(t=>{
-        if(!t) return;
-        if(t.checked && (!t.repeat||t.repeat==='none')) doneMap[dk]=(doneMap[dk]||0)+1;
-        if(t.completions) Object.entries(t.completions).forEach(([idk,v])=>{ if(v) doneMap[idk]=(doneMap[idk]||0)+1; });
-      });
-    });
-    const hm=document.createElement('div'); hm.className='heatmap';
-    const start=new Date(monday); start.setDate(start.getDate()-77); // 11주 전 월요일부터 이번 주까지
-    for(let w=0;w<12;w++){
-      const col=document.createElement('div'); col.className='heatmap-col';
-      for(let d=0;d<7;d++){
-        const day=new Date(start); day.setDate(start.getDate()+w*7+d);
-        const dk=dateKey(day);
-        const n=doneMap[dk]||0;
-        const lv=n===0?0:n<2?1:n<4?2:n<7?3:4;
-        const cell=document.createElement('div'); cell.className='heatmap-cell lv'+lv;
-        if(day>now) cell.classList.add('future');
-        cell.title=`${day.getMonth()+1}/${day.getDate()} · ${n}개 완료`;
-        col.appendChild(cell);
-      }
-      hm.appendChild(col);
-    }
-    panel.appendChild(hm);
-  }
-
-  // important upcoming (D-day)
-  const important=getImportantUpcoming();
-  if(important.length){
-    const ddTitle=document.createElement('div'); ddTitle.className='dash-panel-title';
-    ddTitle.style.cssText='margin-top:14px;margin-bottom:6px';
-    ddTitle.innerHTML='<svg class="ic" width="13" height="13"><use href="#i-star"/></svg> 다가오는 중요 일정';
-    panel.appendChild(ddTitle);
-    const ddList=document.createElement('div'); ddList.className='upcoming-list';
-    important.forEach(it=>{
-      const item=document.createElement('div'); item.className='upcoming-item';
-      const dd=document.createElement('div');
-      dd.className='upcoming-dday '+(it.dday===0?'today':it.dday<=3?'soon':'far');
-      dd.textContent=it.dday===0?'D-DAY':'D-'+it.dday;
-      const info=document.createElement('div'); info.className='upcoming-info';
-      const name=document.createElement('div'); name.className='upcoming-name';
-      name.textContent=(it.priority==='high'?'🔴 ':it.starred?'★ ':'')+it.text;
-      const dateEl=document.createElement('div'); dateEl.className='upcoming-date';
-      const d=new Date(it.dk);
-      dateEl.textContent=`${d.getMonth()+1}월 ${d.getDate()}일 (${DAY_NAMES[dateToDayIdx(d)]})`;
-      info.appendChild(name); info.appendChild(dateEl);
-      item.appendChild(dd); item.appendChild(info);
-      ddList.appendChild(item);
-    });
-    panel.appendChild(ddList);
-  }
-
-}
-
-function getSheetEvents(){
-  const today=new Date(); today.setHours(0,0,0,0);
-  const seen=new Set();
-  const events=[];
-  Object.entries(tasks).forEach(([dk,list])=>{
-    if(!Array.isArray(list)) return;
-    list.forEach(t=>{
-      if(!t||t.color!=='#1677ff'||!t.text.includes('[전관행사]')) return;
-      const date=parseDk(dk); date.setHours(0,0,0,0);
-      const dday=Math.round((date-today)/86400000);
-      if(dday<0) return; // 지난 행사 제외
-      const key=t.text+'|'+dk;
-      if(seen.has(key)) return;
-      seen.add(key);
-      // 날짜 범위 행사는 시작일만 한번 보여주기 위해 텍스트 기준 중복 제거
-      const textSeen=seen.has(t.text);
-      if(!textSeen){ seen.add(t.text); events.push({text:t.text,dk,date,dday}); }
-    });
-  });
-  return events.sort((a,b)=>a.dday-b.dday);
-}
-
-function buildDashCalendar(){
-  const panel = document.getElementById('dashCalendar');
-  panel.innerHTML = '';
-
-  // ── 완료 통계 & 예정 ──
-  const title = document.createElement('div'); title.className='dash-panel-title';
-  title.textContent = '📈 완료 통계 & 예정';
-  panel.appendChild(title);
-
-  // 최근 8주 완료율 추이
-  const now = today();
-  const thisMonday = getMonday(now);
-  const weekStats = [];
-  for(let w=7;w>=0;w--){
-    const ws=new Date(thisMonday); ws.setDate(ws.getDate()-w*7);
-    let total=0,done=0;
-    for(let i=0;i<7;i++){
-      const d=new Date(ws); d.setDate(d.getDate()+i);
-      visibleStored(dateKey(d)).forEach(t=>{ if(t){total++; if(t.checked)done++;} });
-      try{
-        getRepeatTasksForDate(d,i).forEach(({task,instanceDk})=>{
-          total++; if(isRepeatChecked(task,instanceDk))done++;
-        });
-      }catch(e){}
-    }
-    weekStats.push({ws,total,done,pct:total?Math.round(done/total*100):0});
-  }
-  const trendWrap=document.createElement('div'); trendWrap.className='week-bar-wrap'; trendWrap.style.marginBottom='14px';
-  weekStats.forEach(({ws,total,pct},i)=>{
-    const col=document.createElement('div'); col.className='week-bar-col';
-    const bar=document.createElement('div'); bar.className='week-bar'+(i===weekStats.length-1?' today':'');
-    bar.style.height=Math.round(pct/100*50+4)+'px';
-    bar.title=`${ws.getMonth()+1}/${ws.getDate()} 주 · ${pct}% (${total}개)`;
-    const lbl=document.createElement('div'); lbl.className='week-bar-day';
-    lbl.textContent=i===weekStats.length-1?'이번주':`${ws.getMonth()+1}/${ws.getDate()}`;
-    col.appendChild(bar); col.appendChild(lbl); trendWrap.appendChild(col);
-  });
-  const trendTitle=document.createElement('div'); trendTitle.className='dash-panel-title'; trendTitle.style.marginBottom='6px';
-  trendTitle.textContent='주별 완료율 (최근 8주)';
-  panel.appendChild(trendTitle);
-  panel.appendChild(trendWrap);
-
-  // 앞으로 해야 할 일 (미완료·예정, 가까운 날짜순)
-  const todayDk0=todayKey();
-  const upcomingTodo=[];
-  Object.entries(tasks).forEach(([dk,list])=>{
-    if(!Array.isArray(list))return;
-    if(dk<todayDk0)return; // 지난 날짜 제외(오늘 포함)
-    list.forEach(t=>{ if(t&&!t.checked&&!t.pending&&(!t.repeat||t.repeat==='none')) upcomingTodo.push({dk,task:t}); });
-  });
-  upcomingTodo.sort((a,b)=>a.dk<b.dk?-1:a.dk>b.dk?1:0);
-  const histTitle=document.createElement('div'); histTitle.className='dash-panel-title'; histTitle.style.marginBottom='6px';
-  histTitle.innerHTML='<svg class="ic" width="13" height="13"><use href="#i-clipboard"/></svg> 앞으로 해야 할 일';
-  panel.appendChild(histTitle);
-  if(upcomingTodo.length){
-    const list=document.createElement('div'); list.className='upcoming-list';
-    upcomingTodo.slice(0,8).forEach(({dk,task})=>{
-      const item=document.createElement('div'); item.className='upcoming-item';
-      item.style.cursor='pointer';
-      const dday=Math.round((parseDk(dk)-today())/86400000);
-      const when=document.createElement('div');
-      when.className='upcoming-dday '+(dday===0?'today':dday<=7?'soon':'far');
-      when.textContent=dday===0?'D-DAY':'D-'+dday;
-      const info=document.createElement('div'); info.className='upcoming-info';
-      const name=document.createElement('div'); name.className='upcoming-name';
-      name.textContent=(task.starred?'★ ':'')+(task.priority==='high'?'🔴 ':'')+task.text;
-      const dateEl=document.createElement('div'); dateEl.className='upcoming-date';
-      const pd=parseDk(dk);
-      dateEl.textContent=`${pd.getMonth()+1}월 ${pd.getDate()}일 (${['일','월','화','수','목','금','토'][pd.getDay()]})`+(task.time?` · ⏰${task.time}`:'');
-      info.appendChild(name); info.appendChild(dateEl);
-      item.appendChild(when); item.appendChild(info);
-      item.onclick=()=>{weekStart=getMonday(parseDk(dk));setView('week');window.scrollTo({top:0,behavior:'smooth'});};
-      list.appendChild(item);
-    });
-    panel.appendChild(list);
-  } else {
-    const empty=document.createElement('div');
-    empty.style.cssText='font-size:12px;color:var(--text3);text-align:center;padding:14px';
-    empty.textContent='예정된 할 일이 없어요 🎉';
-    panel.appendChild(empty);
-  }
-
-  // 전관행사 (구글 시트 동기화 데이터가 있을 때만)
-  const sheetEvts = getSheetEvents();
-  if(sheetEvts.length){
-    const sTitle=document.createElement('div'); sTitle.className='dash-panel-title';
-    sTitle.style.cssText='margin-top:14px;margin-bottom:6px';
-    sTitle.innerHTML='<svg class="ic" width="13" height="13"><use href="#i-flag"/></svg> 전관행사 일정';
-    panel.appendChild(sTitle);
-    const list=document.createElement('div'); list.className='upcoming-list';
-    sheetEvts.slice(0,8).forEach(e=>{
-      const item=document.createElement('div'); item.className='upcoming-item';
-      const dd=document.createElement('div');
-      dd.className='upcoming-dday '+(e.dday===0?'today':e.dday<=7?'soon':'far');
-      dd.textContent=e.dday===0?'D-DAY':'D-'+e.dday;
-      const info=document.createElement('div'); info.className='upcoming-info';
-      const cleanName=e.text.replace('[전관행사]','').trim();
-      const name=document.createElement('div'); name.className='upcoming-name'; name.textContent=cleanName||e.text;
-      const dateEl=document.createElement('div'); dateEl.className='upcoming-date';
-      dateEl.textContent=`${e.date.getMonth()+1}월 ${e.date.getDate()}일 (${['일','월','화','수','목','금','토'][e.date.getDay()]})`;
-      info.appendChild(name); info.appendChild(dateEl);
-      item.appendChild(dd); item.appendChild(info);
-      list.appendChild(item);
-    });
-    panel.appendChild(list);
-  }
-}
-
-// ── Google Sheet Sync ──
-const SHEET_ID  = '1wqZEZF34-4CzAsIeNxGyIWvPkjgw4zHCcw1K_exfzIk';
-const SHEET_GID = '1376643190';
-const SHEET_SYNC_KEY = 'sheetLastSync';
-const SHEET_COL_START = 40; // AO (0-based)
-const SHEET_COL_END   = 48; // AW (0-based)
-
-function parseCSV(text){
-  const rows=[];
-  for(const line of text.split('\n')){
-    const fields=[]; let f='', q=false;
-    for(let i=0;i<line.length;i++){
-      const c=line[i];
-      if(c==='"'){ if(q&&line[i+1]==='"'){f+='"';i++;}else q=!q; }
-      else if(c===','&&!q){ fields.push(f); f=''; }
-      else f+=c;
-    }
-    fields.push(f); rows.push(fields);
-  }
-  return rows;
-}
-
-function parseDateRange(cellText, contextYear){
-  // e.g. "[전관행사] L+DAY (1/13 10시~1/15 10시) * 1/13 10시~..."
-  // Deduplicate M/D pairs and track year rollover within the range
-  const rawMatches=[...cellText.matchAll(/(\d{1,2})\/(\d{1,2})/g)]
-    .map(m=>({month:+m[1],day:+m[2]}));
-  if(!rawMatches.length) return [];
-  // Deduplicate consecutive identical months/days
-  const unique=[rawMatches[0]];
-  for(let i=1;i<rawMatches.length;i++){
-    const prev=unique[unique.length-1];
-    if(rawMatches[i].month!==prev.month||rawMatches[i].day!==prev.day) unique.push(rawMatches[i]);
-  }
-  // Assign years: if month drops (12→1), increment year
-  let yr=contextYear; let prevM=null;
-  const dated=unique.map(({month,day})=>{
-    if(prevM!==null&&month<prevM&&prevM>=10) yr++;
-    prevM=month;
-    return new Date(yr,month-1,day);
-  });
-  if(dated.length===1) return dated;
-  // Build inclusive date range between first and last
-  const days=[]; const cur=new Date(dated[0]); const end=new Date(dated[dated.length-1]);
-  while(cur<=end){ days.push(new Date(cur)); cur.setDate(cur.getDate()+1); }
-  return days;
-}
-
-function makeEventText(cellText){
-  // Strip annotation after asterisk (e.g. "* 1/13 10시~... 우선 랜딩")
-  return cellText.replace(/\*[^[]*$/,'').replace(/\s+/g,' ').trim();
-}
-
-async function fetchSheetCSV(){
-  const exportUrl=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${SHEET_GID}`;
-  const gvizUrl=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=${SHEET_GID}`;
-  const pubUrl=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/pub?gid=${SHEET_GID}&single=true&output=csv`;
-  // gviz 엔드포인트는 공개 시트에 CORS를 허용 → 프록시 없이 직접 시도 (가장 빠르고 안정적)
-  const candidates=[
-    gvizUrl,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(exportUrl)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(gvizUrl)}`,
-    `https://corsproxy.io/?url=${encodeURIComponent(exportUrl)}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(exportUrl)}`,
-    `https://api.allorigins.win/get?url=${encodeURIComponent(exportUrl)}`,
-    `https://api.allorigins.win/get?url=${encodeURIComponent(pubUrl)}`,
-  ];
-  let fallbackCsv=null;
-  for(const url of candidates){
-    try{
-      const res=await fetch(url,{signal:AbortSignal.timeout(10000)});
-      if(!res.ok) continue;
-      let csv=await res.text();
-      try{ const j=JSON.parse(csv); if(j.contents) csv=j.contents; }catch(e){}
-      if(!csv||!csv.includes(',')||!csv.includes('\n')) continue;
-      const rows=parseCSV(csv);
-      // 최우선: 전관행사 셀이 실제로 보이는 CSV
-      if(rows.some(r=>r.some(c=>c&&c.includes('[전관행사]')))) return csv;
-      // 차선: 컬럼 폭이 충분한 CSV (전관행사가 없는 기간일 수도 있으므로)
-      if(!fallbackCsv&&rows.some(r=>r.length>SHEET_COL_END)) fallbackCsv=csv;
-    }catch(e){ continue; }
-  }
-  return fallbackCsv;
-}
-
-async function syncSheetEvents(manual=false){
-  const syncBtn=document.getElementById('sheetSyncBtn');
-  if(syncBtn){ syncBtn.disabled=true; syncBtn.textContent='동기화 중...'; }
-  try{
-    const csv=await fetchSheetCSV();
-    if(!csv) throw new Error('CSV 로드 실패');
-    const rows=parseCSV(csv);
-
-    // Determine starting year: 시트 상단에서 4자리 연도(20xx)를 직접 탐색
-    let contextYear=null, prevWeekMonth=null;
-    outer:
-    for(let ri=0;ri<Math.min(rows.length,5);ri++){
-      for(const cell of (rows[ri]||[])){
-        const ym=(cell||'').match(/20(2\d)\s*년?/);
-        if(ym){ contextYear=2000+(+ym[1]); break outer; }
-      }
-    }
-    const firstDateRow=rows[2]||[];
-    for(let ci=41;ci<=47;ci++){
-      const m=(firstDateRow[ci]||'').match(/(\d{1,2})[월\/\s]\s*\d/);
-      if(m){
-        prevWeekMonth=+m[1];
-        if(contextYear===null) contextYear=prevWeekMonth>=10?new Date().getFullYear()-(new Date().getMonth()>=9?0:1):new Date().getFullYear();
-        break;
-      }
-    }
-    if(contextYear===null) contextYear=new Date().getFullYear();
-
-    let added=0;
-    // Date rows at CSV indices 2,8,14,20,...  Event rows: dateIdx+1 (가변탭1), dateIdx+2 (가변탭2)
-    for(let dateIdx=2; dateIdx<rows.length; dateIdx+=6){
-      // Update context year by reading this week's Monday date
-      const dateRow=rows[dateIdx]||[];
-      for(let ci=41;ci<=47;ci++){
-        const m=(dateRow[ci]||'').match(/(\d{1,2})[월\/\s]\s*\d/);
-        if(m){
-          const mo=+m[1];
-          if(prevWeekMonth!==null&&mo<prevWeekMonth&&prevWeekMonth>=10) contextYear++;
-          prevWeekMonth=mo; break;
-        }
-      }
-      // Scan event rows: +1 (가변탭1) and +2 (가변탭2)
-      for(const offset of [1,2]){
-        const evRow=rows[dateIdx+offset]||[];
-        for(let ci=SHEET_COL_START;ci<=SHEET_COL_END;ci++){
-          const cell=(evRow[ci]||'').trim();
-          if(!cell.includes('[전관행사]')) continue;
-          const dates=parseDateRange(cell, contextYear);
-          if(!dates.length) continue;
-          const text=makeEventText(cell);
-          dates.forEach(date=>{
-            const dk=dateKey(date);
-            if(!tasks[dk]) tasks[dk]=[];
-            if(!tasks[dk].some(t=>t&&t.text===text)){
-              tasks[dk].push({id:uid(),text,checked:false,starred:true,color:'#1677ff',repeat:'none',completions:{},subs:[]});
-              added++;
-            }
-          });
-        }
-      }
-    }
-    if(added>0){ localStorage.setItem(STORAGE_KEY,JSON.stringify(tasks)); render(); }
-    localStorage.setItem(SHEET_SYNC_KEY,new Date().toISOString().slice(0,10));
-    if(syncBtn){ syncBtn.disabled=false; syncBtn.textContent=`✅ 동기화됨 (${added}건)`; }
-    buildDashStats(); buildDashCalendar();
-    const p=document.getElementById('dashCalendar'); if(p) appendSheetSyncRow(p);
-    return {success:true,added};
-  }catch(e){
-    if(syncBtn){
-      syncBtn.disabled=false; syncBtn.textContent=`⚠️ 실패`;
-      setTimeout(()=>{ if(syncBtn.isConnected) syncBtn.innerHTML='<svg class="ic" width="12" height="12"><use href="#i-download"/></svg> 지금 가져오기'; },4000);
-    }
-    if(manual) alert('시트를 가져오지 못했어요.\n\n1) 구글시트가 "링크가 있는 모든 사용자"로 공개되어 있는지 확인해 주세요.\n2) 잠시 후 다시 시도해 주세요.');
-    console.warn('Sheet sync error:',e);
-    return {success:false,error:e.message};
-  }
-}
-
-function checkMondaySync(){
-  const today=new Date();
-  if(today.getDay()!==1) return; // 월요일만
-  const todayStr=today.toISOString().slice(0,10);
-  if(localStorage.getItem(SHEET_SYNC_KEY)===todayStr) return;
-  syncSheetEvents();
-}
-
-function appendSheetSyncRow(panel){
-  // '지금 가져오기' 버튼 제거됨 — 기존에 그려진 행이 있으면 정리만 함
-  const old=panel.querySelector('.sheet-sync-row');
-  if(old) old.remove();
-  const old2=panel.querySelector('.sheet-sync-divider');
-  if(old2) old2.remove();
-}
-
-function initDashboard(){
-  if(window.innerWidth<=768) return;
-  buildDashStats();
-  buildDashCalendar();
-  appendSheetSyncRow(document.getElementById('dashCalendar'));
-}
-
-initDashboard();
-checkMondaySync();
 
 // ── 이름 변경 / 데이터 이전 ──
 function renameAccount() {
@@ -6037,8 +5407,6 @@ function bulkForEach(fn) {
     {k:'주간 보기', ic:'columns', fn:()=>setView('week')},
     {k:'월간 보기', ic:'grid', fn:()=>setView('month')},
     {k:'연간 보기', ic:'grid9', fn:()=>setView('year')},
-    {k:'시간표 보기', ic:'rows', fn:()=>setView('timeblock')},
-    {k:'타임라인 보기', ic:'gantt', fn:()=>setView('timeline')},
     {k:'포커스 모드', ic:'target', fn:()=>setView('focus')},
     {k:'다크모드 전환', ic:'moon', fn:()=>document.getElementById('darkBtn').click()},
     {k:'템플릿', ic:'clipboard', fn:()=>document.getElementById('templateBtn').click()},
