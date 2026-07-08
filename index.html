@@ -138,10 +138,6 @@
   </div>
   <div class="header-actions">
     <button class="icon-btn" id="guideBtn" title="사용 가이드" aria-label="사용 가이드"><svg class="ic" width="16" height="16"><use href="#i-help"/></svg></button>
-    <div class="more-menu-wrap">
-      <button class="icon-btn" id="notesBtn" title="메모장 (빈 곳 더블클릭으로도 생성)" aria-label="메모장 열기"><svg class="ic" width="16" height="16"><use href="#i-pencil"/></svg></button>
-      <div class="more-menu hidden" id="notesMenu"></div>
-    </div>
     <button class="icon-btn" id="taskMemoBtn" title="태스크 메모 모아보기" aria-label="태스크 메모 모아보기"><svg class="ic" width="16" height="16"><use href="#i-note"/></svg></button>
     <button class="icon-btn" id="darkBtn" title="다크 모드" aria-label="다크 모드 전환"><svg class="ic" width="16" height="16"><use href="#i-moon"/></svg></button>
     <div class="more-menu-wrap">
@@ -457,17 +453,6 @@
     <div class="modal-title"><svg class="ic" width="15" height="15" style="color:var(--primary);vertical-align:-0.12em"><use href="#i-history"/></svg> 버전 이력 <button class="memo-close" id="noteHistClose" aria-label="닫기" style="float:right">✕</button></div>
     <div id="noteHistList" style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow-y:auto"></div>
   </div>
-</div>
-
-<!-- 캔버스 모드 -->
-<div class="canvas-overlay hidden" id="canvasOverlay">
-  <div class="canvas-head">
-    <span style="font-weight:700;font-size:14px">🗺 메모 캔버스</span>
-    <span style="font-size:11px;color:var(--text3)">카드 드래그: 배치 · 배경 드래그: 이동 · 빈 곳 더블클릭: 새 메모</span>
-    <button class="btn-primary" id="canvasAddBtn" type="button" style="margin-left:auto;padding:4px 10px;font-size:12px">+ 새 메모</button>
-    <button class="memo-close" id="canvasClose" aria-label="캔버스 닫기">✕</button>
-  </div>
-  <div class="canvas-board" id="canvasBoard"></div>
 </div>
 
 <input type="file" id="noteImgInput" accept="image/*" style="display:none">
