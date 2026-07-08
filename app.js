@@ -4317,9 +4317,24 @@ function openCanvas() {
 }
 function closeCanvas() { document.getElementById('canvasOverlay').classList.add('hidden'); }
 document.getElementById('canvasClose').onclick = closeCanvas;
-function renderCanvas() {
+document.getElementById('canvasAddBtn').onclick = () => {
+  if (READ_ONLY) return;
   const board = document.getElementById('canvasBoard');
-  board.innerHTML = '';
+  const r = board.getBoundingClientRect();
+  const id = createMemo(null);
+  const m = memos[id];
+  if (!m) return;
+  m.cx = (r.width / 2 - canvasPan.x) / canvasPan.z;
+  m.cy = (r.height / 2 - canvasPan.y) / canvasPan.z;
+  saveMemos();
+  renderCanvas();
+};
+function renderCanvas() {
+  // 매 렌더마다 board에 이벤트 리스너가 새로 쌓이는 걸 막기 위해 노드를 통째로 교체
+  // (innerHTML='' 는 자식만 지울 뿐 board 자신에 붙은 리스너는 그대로 남기 때문)
+  const old = document.getElementById('canvasBoard');
+  const board = old.cloneNode(false);
+  old.replaceWith(board);
   // 팬/줌은 inner 컨테이너의 CSS transform으로만 처리 — 이동/확대 때 재렌더 없음(성능)
   const inner = el('div', 'canvas-inner');
   board.appendChild(inner);
@@ -4459,7 +4474,8 @@ function renderCanvas() {
     if (READ_ONLY) return;
     if (e.target.closest('.canvas-card')) return;
     const r = board.getBoundingClientRect();
-    const m = createMemo(null);
+    const id = createMemo(null);
+    const m = memos[id];
     if (!m) return;
     m.cx = (e.clientX - r.left - canvasPan.x) / canvasPan.z;
     m.cy = (e.clientY - r.top - canvasPan.y) / canvasPan.z;
@@ -4539,6 +4555,8 @@ function renderNotesMenu() {
 document.getElementById('notesBtn').onclick = e => {
   e.stopPropagation();
   document.getElementById('moreMenu').classList.add('hidden');
+  // 아직 메모가 하나도 없으면 메뉴 대신 바로 새 메모를 열어준다 (빈 드롭다운에서 헤매지 않도록)
+  if (!READ_ONLY && !Object.keys(memos).length) { createMemo(null); return; }
   renderNotesMenu();
   notesMenu.classList.toggle('hidden');
 };
