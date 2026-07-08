@@ -2100,7 +2100,7 @@ function buildInputForm(dk,parentId){
     psRow.appendChild(ps);
     form.appendChild(psRow);
     const rs=el('div','repeat-selector');
-    [['none','없음'],['daily','매일'],['weekdays','평일'],['weekly','매주'],['biweekly','격주'],['monthly','매월'],['monthlyNth','N째요일'],['monthlyFirstBiz','월초영업일'],['monthlyLastBiz','월말영업일']].forEach(([val,label])=>{
+    [['none','없음'],['daily','매일'],['weekdays','매 영업일'],['weekly','매주'],['biweekly','격주'],['monthly','매월'],['monthlyNth','N째요일'],['monthlyFirstBiz','월초영업일'],['monthlyLastBiz','월말영업일']].forEach(([val,label])=>{
       const btn=el('button',`repeat-opt${val==='none'?' active':''}`,{type:'button',textContent:label});
       btn.onclick=()=>{selRepeat=val;rs.querySelectorAll('.repeat-opt').forEach(b=>b.classList.remove('active'));btn.classList.add('active');};
       rs.appendChild(btn);
