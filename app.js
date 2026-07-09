@@ -1594,29 +1594,51 @@ function renderMemoAllModal(){
     if(!Array.isArray(tList))return;
     tList.forEach(t=>{
       if(t&&((t.memo&&t.memo.trim())||(Array.isArray(t.memoImages)&&t.memoImages.length)))
-        items.push({dk,task:t,ts:t.memoUpdated||parseDk(dk).getTime()});
+        items.push({type:'task',dk,task:t,ts:t.memoUpdated||parseDk(dk).getTime()});
     });
+  });
+  Object.values(memos).forEach(m=>{
+    if(!m.dk) return; // 날짜별 메모만 (자유 배치 메모는 여기 대상 아님)
+    if(!((m.title&&m.title.trim())||(m.text&&memoPlainText(m.text).trim()))) return;
+    items.push({type:'daymemo',dk:m.dk,memo:m,ts:m.updated||m.created||parseDk(m.dk).getTime()});
   });
   items.sort((a,b)=>b.ts-a.ts);
   if(!items.length){
     list.appendChild(el('div','trash-empty',{textContent:'아직 작성한 메모가 없어요'}));
     return;
   }
-  items.forEach(({dk,task})=>{
+  items.forEach(item=>{
+    const {dk}=item;
     const row=el('div','memo-all-item');
     const d=parseDk(dk);
     const head=el('div','memo-all-head');
-    head.appendChild(el('span','memo-all-task',{textContent:(task.starred?'★ ':'')+task.text}));
+    if(item.type==='task'){
+      head.appendChild(el('span','memo-all-task',{textContent:(item.task.starred?'★ ':'')+item.task.text}));
+    } else {
+      head.appendChild(el('span','memo-all-task',{textContent:'🗒 '+memoLabel(item.memo)}));
+    }
     head.appendChild(el('span','memo-all-date',{textContent:`${d.getMonth()+1}/${d.getDate()} (${DAY_NAMES[dateToDayIdx(d)]})`}));
     row.appendChild(head);
-    const imgCnt=Array.isArray(task.memoImages)?task.memoImages.length:0;
-    const excerpt=memoPlainText(task.memo).split('\n').slice(0,2).join(' / ').slice(0,80);
-    row.appendChild(el('div','memo-all-excerpt',{textContent:(imgCnt?`📷${imgCnt} `:'')+excerpt}));
-    row.onclick=()=>{
-      document.getElementById('memoAllModal').classList.add('hidden');
-      weekStart=getMonday(d);setView('week');
-      setTimeout(()=>openMemo(dk,task.id,document.body),100);
-    };
+    if(item.type==='task'){
+      const imgCnt=Array.isArray(item.task.memoImages)?item.task.memoImages.length:0;
+      const excerpt=memoPlainText(item.task.memo).split('\n').slice(0,2).join(' / ').slice(0,80);
+      row.appendChild(el('div','memo-all-excerpt',{textContent:(imgCnt?`📷${imgCnt} `:'')+excerpt}));
+      row.onclick=()=>{
+        document.getElementById('memoAllModal').classList.add('hidden');
+        weekStart=getMonday(d);setView('week');
+        setTimeout(()=>openMemo(dk,item.task.id,document.body),100);
+      };
+    } else {
+      const excerpt=memoPlainText(item.memo.text).split('\n').slice(0,2).join(' / ').slice(0,80);
+      row.appendChild(el('div','memo-all-excerpt',{textContent:excerpt}));
+      row.onclick=()=>{
+        document.getElementById('memoAllModal').classList.add('hidden');
+        weekStart=getMonday(d);setView('week');
+        item.memo.open=true; bringNoteToFront(item.memo.id);
+        if(!READ_ONLY) saveMemos();
+        renderNoteWins();
+      };
+    }
     list.appendChild(row);
   });
 }
@@ -3400,6 +3422,7 @@ function normalizeMemos(raw) {
       x: typeof m.x === 'number' ? m.x : 80, y: typeof m.y === 'number' ? m.y : 120,
       w: typeof m.w === 'number' ? m.w : 300, h: typeof m.h === 'number' ? m.h : 280,
       z: typeof m.z === 'number' ? m.z : 0, created: m.created || Date.now(),
+      updated: typeof m.updated === 'number' ? m.updated : null,
       color: m.color || null, pinned: !!m.pinned,
       cx: typeof m.cx === 'number' ? m.cx : null, cy: typeof m.cy === 'number' ? m.cy : null,
       hist: Array.isArray(m.hist) ? m.hist.filter(h => h && h.t).map(h => ({t: h.t, title: String(h.title||''), text: String(h.text||'')})) : [],
