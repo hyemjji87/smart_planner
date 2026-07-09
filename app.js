@@ -161,13 +161,23 @@ function saveOffDays() {
 }
 function initOffSync() {
   const ref = offFbRef(); if (!ref) return;
-  ref.on('value', snap => {
-    if (pendingOffLocal) return;
+  ref.once('value').then(snap => {
     const remote = snap.val();
-    offDays = (remote && typeof remote === 'object') ? remote : {};
-    localStorage.setItem(OFF_KEY, JSON.stringify(offDays));
-    render();
-  }, () => {});
+    if (remote && typeof remote === 'object' && Object.keys(remote).length) {
+      offDays = remote;
+      localStorage.setItem(OFF_KEY, JSON.stringify(offDays));
+      render();
+    } else if (Object.keys(offDays).length && !READ_ONLY) {
+      ref.set(fbClean(offDays)).catch(()=>{});
+    }
+    ref.on('value', snap2 => {
+      if (pendingOffLocal) return;
+      const remote2 = snap2.val();
+      offDays = (remote2 && typeof remote2 === 'object') ? remote2 : {};
+      localStorage.setItem(OFF_KEY, JSON.stringify(offDays));
+      render();
+    });
+  }).catch(() => {});
 }
 
 const READ_ONLY = URL_PARAMS.get('ro') === '1';
