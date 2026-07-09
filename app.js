@@ -1606,22 +1606,23 @@ function renderMemoAllModal(){
   });
   items.sort((a,b)=>b.ts-a.ts);
 
-  // 월 필터 칩 — 데이터에 실제로 있는 월만, 최신순
+  // 월 필터 드롭다운 — 데이터에 실제로 있는 월만, 최신순
   filterBar.innerHTML='';
   const monthCounts={};
   items.forEach(it=>{ const ym=it.dk.slice(0,7); monthCounts[ym]=(monthCounts[ym]||0)+1; });
   const months=Object.keys(monthCounts).sort((a,b)=>b.localeCompare(a));
   if(months.length){
     if(memoAllMonthFilter && !monthCounts[memoAllMonthFilter]) memoAllMonthFilter=null;
-    const allChip=el('button',`notes-tag-chip${!memoAllMonthFilter?' active':''}`,{type:'button',textContent:`전체 ${items.length}`});
-    allChip.onclick=()=>{ memoAllMonthFilter=null; renderMemoAllModal(); };
-    filterBar.appendChild(allChip);
+    const sel=el('select','modal-input',{style:'margin-bottom:0;width:auto;font-size:12px;padding:5px 8px'});
+    const optAll=el('option',null,{value:'',textContent:`전체 (${items.length})`});
+    sel.appendChild(optAll);
     months.forEach(ym=>{
       const [y,m]=ym.split('-');
-      const chip=el('button',`notes-tag-chip${memoAllMonthFilter===ym?' active':''}`,{type:'button',textContent:`${y}년 ${+m}월 ${monthCounts[ym]}`});
-      chip.onclick=()=>{ memoAllMonthFilter=ym; renderMemoAllModal(); };
-      filterBar.appendChild(chip);
+      sel.appendChild(el('option',null,{value:ym,textContent:`${y}년 ${+m}월 (${monthCounts[ym]})`}));
     });
+    sel.value=memoAllMonthFilter||'';
+    sel.onchange=()=>{ memoAllMonthFilter=sel.value||null; renderMemoAllModal(); };
+    filterBar.appendChild(sel);
     filterBar.style.display='flex';
   } else {
     filterBar.style.display='none';
