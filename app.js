@@ -1586,8 +1586,10 @@ document.getElementById('templateCloseBtn').onclick=()=>document.getElementById(
 document.getElementById('templateModal').onclick=e=>{if(e.target===document.getElementById('templateModal'))document.getElementById('templateModal').classList.add('hidden');};
 
 // ── 메모 모아보기 ──
+let memoAllMonthFilter = null; // null=전체, 아니면 'YYYY-MM'
 function renderMemoAllModal(){
   const list=document.getElementById('memoAllList');
+  const filterBar=document.getElementById('memoAllFilter');
   list.innerHTML='';
   const items=[];
   Object.entries(tasks).forEach(([dk,tList])=>{
@@ -1603,11 +1605,34 @@ function renderMemoAllModal(){
     items.push({type:'daymemo',dk:m.dk,memo:m,ts:m.updated||m.created||parseDk(m.dk).getTime()});
   });
   items.sort((a,b)=>b.ts-a.ts);
-  if(!items.length){
-    list.appendChild(el('div','trash-empty',{textContent:'아직 작성한 메모가 없어요'}));
+
+  // 월 필터 칩 — 데이터에 실제로 있는 월만, 최신순
+  filterBar.innerHTML='';
+  const monthCounts={};
+  items.forEach(it=>{ const ym=it.dk.slice(0,7); monthCounts[ym]=(monthCounts[ym]||0)+1; });
+  const months=Object.keys(monthCounts).sort((a,b)=>b.localeCompare(a));
+  if(months.length){
+    if(memoAllMonthFilter && !monthCounts[memoAllMonthFilter]) memoAllMonthFilter=null;
+    const allChip=el('button',`notes-tag-chip${!memoAllMonthFilter?' active':''}`,{type:'button',textContent:`전체 ${items.length}`});
+    allChip.onclick=()=>{ memoAllMonthFilter=null; renderMemoAllModal(); };
+    filterBar.appendChild(allChip);
+    months.forEach(ym=>{
+      const [y,m]=ym.split('-');
+      const chip=el('button',`notes-tag-chip${memoAllMonthFilter===ym?' active':''}`,{type:'button',textContent:`${y}년 ${+m}월 ${monthCounts[ym]}`});
+      chip.onclick=()=>{ memoAllMonthFilter=ym; renderMemoAllModal(); };
+      filterBar.appendChild(chip);
+    });
+    filterBar.style.display='flex';
+  } else {
+    filterBar.style.display='none';
+  }
+
+  const filtered = memoAllMonthFilter ? items.filter(it=>it.dk.slice(0,7)===memoAllMonthFilter) : items;
+  if(!filtered.length){
+    list.appendChild(el('div','trash-empty',{textContent:memoAllMonthFilter?'이 달엔 메모가 없어요':'아직 작성한 메모가 없어요'}));
     return;
   }
-  items.forEach(item=>{
+  filtered.forEach(item=>{
     const {dk}=item;
     const row=el('div','memo-all-item');
     const d=parseDk(dk);
