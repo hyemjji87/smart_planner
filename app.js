@@ -1,3 +1,29 @@
+// ── Firebase (클라우드 동기화 — 로컬 저장이 항상 먼저, 이건 백업/기기 간 동기화용) ──
+const FB_CONFIG = {
+  apiKey: "AIzaSyAmp5SST7NMWhfNGuaRgz83Vkxp3gY-6dY",
+  authDomain: "my-planner-79ff2.firebaseapp.com",
+  databaseURL: "https://my-planner-79ff2-default-rtdb.firebaseio.com",
+  projectId: "my-planner-79ff2",
+  storageBucket: "my-planner-79ff2.firebasestorage.app",
+  messagingSenderId: "382487514266",
+  appId: "1:382487514266:web:f4ca3ac3c30d1963d3e323"
+};
+let fbDb = null;
+let fbSaveTimer = null;
+try {
+  firebase.initializeApp(FB_CONFIG);
+  fbDb = firebase.database();
+} catch(e) { console.warn('Firebase 초기화 실패:', e); }
+
+function setSyncStatus(s) {
+  const dot = document.getElementById('syncDot');
+  if (!dot) return;
+  dot.className = 'sync-dot ' + s;
+  dot.title = s === 'synced' ? '✅ 동기화됨' : s === 'syncing' ? '🔄 동기화 중...' : '❌ 오프라인 (로컬엔 저장됨)';
+}
+// Firebase는 undefined가 섞인 값을 저장 거부 → JSON 왕복으로 정리해서 보낸다
+function fbClean(v){ return v == null ? null : JSON.parse(JSON.stringify(v)); }
+
 // ── Constants ──
 const DAY_NAMES = ['월','화','수','목','금','토','일'];
 const COLORS = [
@@ -111,13 +137,37 @@ const _rawTeam = URL_PARAMS.get('team');
 const IS_TEAM = !!_rawTeam;
 const USER_ID = IS_TEAM ? ('team-' + _rawTeam.replace(/[.#$\[\]\/]/g,'').trim().slice(0,40)) : (URL_PARAMS.get('u') || '');
 const STORAGE_KEY = USER_ID ? `calTasks_${USER_ID}` : 'calTasks';
+// Firebase 경로용 ID — . # $ [ ] / 는 Firebase 키 금지 문자라 제거 (localStorage 키는 원래 이름 유지)
+const FB_UID = USER_ID.replace(/[.#$\[\]\/]/g,'').trim().slice(0,40);
+function fbRef() { return fbDb && FB_UID && USER_ID !== 'demo' ? fbDb.ref(`users/${FB_UID}/tasks`) : null; }
 
 // ── 사용자 지정 휴무일 (할 일 입력하듯 날짜별 지정, 기기 간 동기화) ──
 const OFF_KEY = USER_ID ? `calOffDays_${USER_ID}` : 'calOffDays';
 let offDays = (() => { try { return JSON.parse(localStorage.getItem(OFF_KEY) || '{}') || {}; } catch { return {}; } })();
+function offFbRef() { return fbDb && FB_UID && USER_ID !== 'demo' ? fbDb.ref(`users/${FB_UID}/offdays`) : null; }
+let offSaveTimer = null, pendingOffLocal = false;
 function saveOffDays() {
   if (READ_ONLY) return;
   localStorage.setItem(OFF_KEY, JSON.stringify(offDays));
+  const ref = offFbRef(); if (!ref) return;
+  pendingOffLocal = true;
+  clearTimeout(offSaveTimer);
+  offSaveTimer = setTimeout(() => {
+    offSaveTimer = null;
+    ref.set(Object.keys(offDays).length ? fbClean(offDays) : null)
+      .then(() => { pendingOffLocal = false; })
+      .catch(e => console.warn('Firebase 저장 실패(offdays):', e));
+  }, 300);
+}
+function initOffSync() {
+  const ref = offFbRef(); if (!ref) return;
+  ref.on('value', snap => {
+    if (pendingOffLocal) return;
+    const remote = snap.val();
+    offDays = (remote && typeof remote === 'object') ? remote : {};
+    localStorage.setItem(OFF_KEY, JSON.stringify(offDays));
+    render();
+  }, () => {});
 }
 
 const READ_ONLY = URL_PARAMS.get('ro') === '1';
@@ -208,9 +258,93 @@ function loadTasks() {
   } catch { return {}; }
 }
 
+let pendingUpload = false;
+let pendingTasksLocal = false;
+let _pendingSaveDks = new Set();   // 디바운스 대기 중인 날짜들 (여러 dk 저장 시 마지막 것만 쓰이는 버그 방지)
+let _pendingSaveFull = false;      // 전체 저장 요청(인자 없는 saveTasks)이 대기 중인지
+let _taskSaveRetryTimer = null;
+function _flushTaskSave() {
+  const ref = fbRef();
+  if (!ref) return;
+  const full = _pendingSaveFull;
+  const dks = [..._pendingSaveDks];
+  _pendingSaveFull = false; _pendingSaveDks.clear();
+  let p;
+  if (full || !dks.length) {
+    p = ref.set(fbClean(tasks));
+  } else if (dks.length === 1) {
+    p = ref.child(dks[0]).set(fbClean(tasks[dks[0]]));
+  } else {
+    const updates = {};
+    dks.forEach(d => { updates[d] = fbClean(tasks[d]); });
+    p = ref.update(updates);
+  }
+  p.then(() => { pendingTasksLocal = false; setSyncStatus('synced'); })
+   .catch((e) => {
+     console.warn('Firebase 저장 실패:', e);
+     if (full) _pendingSaveFull = true;
+     dks.forEach(d => _pendingSaveDks.add(d));
+     pendingUpload = true; setSyncStatus('offline');
+     clearTimeout(_taskSaveRetryTimer);
+     _taskSaveRetryTimer = setTimeout(_flushTaskSave, 15000);
+   });
+}
 function saveTasks(dk) {
   if (READ_ONLY) return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+  const ref = fbRef();
+  if (!ref) return;
+  pendingTasksLocal = true;
+  if (dk) _pendingSaveDks.add(dk); else _pendingSaveFull = true;
+  if (!navigator.onLine) { pendingUpload = true; setSyncStatus('offline'); return; }
+  setSyncStatus('syncing');
+  clearTimeout(fbSaveTimer);
+  fbSaveTimer = setTimeout(_flushTaskSave, 300);
+}
+function fbUpload() {
+  if (READ_ONLY) return Promise.reject('read-only');
+  const ref = fbRef();
+  if (!ref) return Promise.reject('no ref');
+  pendingTasksLocal = true;
+  setSyncStatus('syncing');
+  clearTimeout(fbSaveTimer); fbSaveTimer = null;
+  clearTimeout(_taskSaveRetryTimer); _taskSaveRetryTimer = null;
+  _pendingSaveFull = false; _pendingSaveDks.clear();
+  return ref.set(fbClean(tasks))
+    .then(() => { pendingTasksLocal = false; setSyncStatus('synced'); })
+    .catch(e => { console.warn('Firebase 저장 실패:', e); setSyncStatus('offline'); throw e; });
+}
+function initFirebaseSync() {
+  const ref = fbRef();
+  if (!ref) return;
+  const dot = document.getElementById('syncDot');
+  if (dot) dot.style.display = 'block';
+  setSyncStatus('syncing');
+  ref.once('value').then(snapshot => {
+    const remote = snapshot.val();
+    if (remote && typeof remote === 'object' && Object.keys(remote).length > 0) {
+      // Firebase에 데이터 있음 → 로컬에 덮어쓰기
+      tasks = normalizeTasks(remote);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+      render();
+      setSyncStatus('synced');
+    } else if (Object.keys(tasks).length > 0 && !READ_ONLY) {
+      // Firebase 비어있고 로컬에 데이터 있음 → 업로드해서 백업
+      fbUpload();
+    } else {
+      setSyncStatus('synced');
+    }
+    // 이후 다른 기기 변경사항 실시간 반영 (내 로컬 편집 업로드 중이면 건너뜀 → 덮어쓰기 방지)
+    ref.on('value', snapshot => {
+      if (pendingTasksLocal) return;
+      const remote = snapshot.val();
+      if (remote && typeof remote === 'object') {
+        tasks = normalizeTasks(remote);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+        render();
+      }
+    });
+  }).catch(() => { setSyncStatus('offline'); });
 }
 
 // ── Date helpers ──
@@ -3281,9 +3415,43 @@ let memos = (() => {
   catch { return {}; }
 })();
 
+function memosFbRef() { return fbDb && FB_UID && USER_ID !== 'demo' ? fbDb.ref(`users/${FB_UID}/memos`) : null; }
+let memoSaveTimer2 = null, pendingMemoLocal = false;
 function saveMemos() {
   if (READ_ONLY) return;
   localStorage.setItem(MEMOS_KEY, JSON.stringify(memos));
+  const ref = memosFbRef(); if (!ref) return;
+  pendingMemoLocal = true;
+  setSyncStatus('syncing');
+  clearTimeout(memoSaveTimer2);
+  memoSaveTimer2 = setTimeout(() => {
+    memoSaveTimer2 = null;
+    ref.set(fbClean(memos))
+      .then(() => { pendingMemoLocal = false; setSyncStatus('synced'); })
+      .catch(() => setSyncStatus('offline'));
+  }, 300);
+}
+function initMemoSync() {
+  const ref = memosFbRef(); if (!ref) return;
+  ref.once('value').then(snap => {
+    const remote = snap.val();
+    if (remote && typeof remote === 'object' && Object.keys(remote).length) {
+      memos = normalizeMemos(remote);
+      localStorage.setItem(MEMOS_KEY, JSON.stringify(memos));
+      renderNoteWins();
+    } else if (Object.keys(memos).length && !READ_ONLY) {
+      ref.set(fbClean(memos)).catch(()=>{});
+    }
+    ref.on('value', snap2 => {
+      if (pendingMemoLocal) return;
+      const remote2 = snap2.val();
+      if (remote2 && typeof remote2 === 'object') {
+        memos = normalizeMemos(remote2);
+        localStorage.setItem(MEMOS_KEY, JSON.stringify(memos));
+        renderNoteWins();
+      }
+    });
+  }).catch(() => {});
 }
 
 function memoChildren(id) {
@@ -4239,9 +4407,33 @@ function sharedTasksFor(dk) {
 // ═══════════════════════════════════════
 const GOALS_KEY = USER_ID ? `calGoals_${USER_ID}` : 'calGoals';
 let goals = (() => { try { return JSON.parse(localStorage.getItem(GOALS_KEY) || '[]') || []; } catch { return []; } })();
+function goalsFbRef() { return fbDb && FB_UID && USER_ID !== 'demo' ? fbDb.ref(`users/${FB_UID}/goals`) : null; }
+let goalSaveTimer = null, pendingGoalLocal = false;
 function saveGoals() {
   if (READ_ONLY) return;
   localStorage.setItem(GOALS_KEY, JSON.stringify(goals));
+  const ref = goalsFbRef(); if (!ref) return;
+  pendingGoalLocal = true;
+  clearTimeout(goalSaveTimer);
+  goalSaveTimer = setTimeout(() => {
+    goalSaveTimer = null;
+    ref.set(fbClean(goals)).then(()=>{pendingGoalLocal=false;}).catch(()=>{});
+  }, 300);
+}
+function initGoalSync() {
+  const ref = goalsFbRef(); if (!ref) return;
+  ref.once('value').then(snap => {
+    const remote = snap.val();
+    const remoteGoals = Array.isArray(remote) ? remote : (remote ? Object.values(remote) : []);
+    if (remoteGoals.length) { goals = remoteGoals; localStorage.setItem(GOALS_KEY, JSON.stringify(goals)); }
+    else if (goals.length && !READ_ONLY) { ref.set(fbClean(goals)).catch(()=>{}); }
+    ref.on('value', snap2 => {
+      if (pendingGoalLocal) return;
+      const r = snap2.val();
+      goals = Array.isArray(r) ? r : (r ? Object.values(r) : []);
+      localStorage.setItem(GOALS_KEY, JSON.stringify(goals));
+    });
+  }).catch(() => {});
 }
 // 오늘 체크 토글
 function toggleGoalToday(id) {
@@ -4640,8 +4832,26 @@ document.addEventListener('keydown',e=>{
 // ── Init ──
 purgeOldTrash();
 render();
+initFirebaseSync();
+initOffSync();
+initMemoSync();
+initGoalSync();
 renderNoteWins();
 rebuildIcsEvents();
+// 주기 백업 업로드 — 보낼 로컬 변경이 있을 때만 (변경 없는 기기가 5분마다 덮어쓰면 다른 기기 편집이 지워질 수 있음)
+setInterval(() => { if (fbRef() && (pendingUpload || pendingTasksLocal)) fbUpload(); }, 5*60*1000);
+window.addEventListener('online', () => {
+  setSyncStatus('syncing');
+  if (pendingUpload && fbRef()) { pendingUpload = false; fbUpload(); }
+});
+window.addEventListener('offline', () => setSyncStatus('offline'));
+// 탭 닫기 직전 — 디바운스 대기 중인 저장을 즉시 반영 (300ms 내 편집 손실 방지)
+window.addEventListener('pagehide', () => {
+  if (fbSaveTimer) { clearTimeout(fbSaveTimer); fbSaveTimer = null; _flushTaskSave(); }
+  if (memoSaveTimer2) { clearTimeout(memoSaveTimer2); memoSaveTimer2 = null; const ref = memosFbRef(); if (ref) ref.set(fbClean(memos)); }
+  if (offSaveTimer) { clearTimeout(offSaveTimer); offSaveTimer = null; const ref = offFbRef(); if (ref) ref.set(Object.keys(offDays).length ? fbClean(offDays) : null); }
+  if (goalSaveTimer) { clearTimeout(goalSaveTimer); goalSaveTimer = null; const ref = goalsFbRef(); if (ref) ref.set(fbClean(goals)); }
+});
 
 // ── PWA 서비스워커 등록 (오프라인 지원 + 홈 화면 설치 + 새 버전 자동 감지) ──
 if ('serviceWorker' in navigator) {

@@ -24,6 +24,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&family=Noto+Serif+KR:wght@400;700&family=Nanum+Gothic&family=Nanum+Myeongjo&family=Nanum+Pen+Script&family=Gowun+Dodum&family=Jua&family=Gaegu&family=Do+Hyeon&display=swap">
   <link rel="stylesheet" href="styles.css">
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js" crossorigin="anonymous"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -137,6 +139,7 @@
     <input class="search-input" id="searchInput" placeholder="찾기... (/)">
   </div>
   <div class="header-actions">
+    <div class="sync-dot offline" id="syncDot" title="동기화 상태" role="status" aria-live="polite" aria-label="동기화 상태"></div>
     <button class="icon-btn" id="guideBtn" title="사용 가이드" aria-label="사용 가이드"><svg class="ic" width="16" height="16"><use href="#i-help"/></svg></button>
     <button class="icon-btn" id="taskMemoBtn" title="태스크 메모 모아보기" aria-label="태스크 메모 모아보기"><svg class="ic" width="16" height="16"><use href="#i-note"/></svg></button>
     <button class="icon-btn" id="darkBtn" title="다크 모드" aria-label="다크 모드 전환"><svg class="ic" width="16" height="16"><use href="#i-moon"/></svg></button>
