@@ -1042,6 +1042,75 @@ function moveRepeatInstanceOne(originDk, taskId, instanceDk, toDk){
     saveTasks(originDk); saveTasks(toDk); render();
   });
 }
+// ── 일정 복사 ──
+// 완료 상태·댓글·메모 히스토리는 빼고 내용(제목·색·별·시간·하위 항목·메모)만 새 일정으로 복제한다.
+function cloneSubForCopy(s){
+  return { id:uid(), text:s.text, checked:false, starred:!!s.starred, color:s.color||null,
+           completions:{}, subs:(Array.isArray(s.subs)?s.subs:[]).map(cloneSubForCopy) };
+}
+// 메모 이미지는 원본과 공유하지 않고 새 id로 복제 (한쪽에서 지워도 다른 쪽은 남도록)
+function cloneMemoImages(src, copy){
+  const ids=Array.isArray(src.memoImages)?src.memoImages:[];
+  if(!ids.length) return;
+  const map={}; ids.forEach(id=>{ map[id]='img_'+uid(); });
+  copy.memoImages=ids.map(id=>map[id]);
+  if(src.memoImgData&&typeof src.memoImgData==='object'){
+    copy.memoImgData={};
+    ids.forEach(id=>{ if(src.memoImgData[id]) copy.memoImgData[map[id]]=src.memoImgData[id]; });
+  }
+  if(copy.memo) ids.forEach(id=>{ copy.memo=copy.memo.split(id).join(map[id]); });
+  ids.forEach(id=>{ try{ idbGetImage(id).then(b=>b?idbPutImage(map[id],b):null).catch(()=>{}); }catch{} });
+}
+// task → 복사본. subsOverride를 주면(반복 회차 복사) 그 회차에 보이던 하위 항목만 담는다.
+function cloneTaskForCopy(t, keepRepeat, subsOverride){
+  const copy={
+    id:uid(), text:t.text, color:t.color||null, starred:!!t.starred,
+    repeat:keepRepeat?(t.repeat||'none'):'none',
+    repeatEnd:keepRepeat?(t.repeatEnd||null):null,
+    priority:t.priority||null, time:t.time||null, duration:t.duration||null,
+    checked:false, completions:{}, skips:{},
+    subs:(Array.isArray(subsOverride)?subsOverride:(Array.isArray(t.subs)?t.subs:[])).map(cloneSubForCopy),
+    memo:t.memo||'', memoImages:[], memoHistory:[], comments:[]
+  };
+  cloneMemoImages(t, copy);
+  return copy;
+}
+// fromDk의 taskId를 toDk에 복사. repCtx가 있으면 그 회차에 보이던 모습대로 단발 복사.
+// silent면 토스트·render()를 생략한다(호출한 쪽에서 한 번에 처리) → 만들어진 복사본을 반환.
+function copyTaskTo(fromDk, taskId, toDk, keepRepeat, repCtx, silent){
+  if(READ_ONLY) return null;
+  const srcDk=(repCtx&&repCtx.originDk)?repCtx.originDk:fromDk;
+  const t=(tasks[srcDk]||[]).find(x=>x.id===taskId);
+  if(!t) return null;
+  let subsOverride=null;
+  if(repCtx&&repCtx.instanceDk&&!keepRepeat){
+    const instDk=repCtx.instanceDk;
+    const shared=(Array.isArray(t.subs)?t.subs:[]).filter(s=>!(s.skips&&s.skips[instDk]));
+    const instOnly=(t.instSubs&&Array.isArray(t.instSubs[instDk]))?t.instSubs[instDk]:[];
+    subsOverride=shared.concat(instOnly);
+  }
+  const copy=cloneTaskForCopy(t, !!keepRepeat, subsOverride);
+  if(!tasks[toDk]) tasks[toDk]=[];
+  tasks[toDk].push(copy);
+  saveTasks(toDk);
+  if(!silent){
+    render();
+    const d=parseDk(toDk);
+    const msg=(toDk===fromDk)
+      ? `"${copy.text.slice(0,16)}" 복제했어요`
+      : `"${copy.text.slice(0,16)}" → ${d.getMonth()+1}/${d.getDate()}에 복사했어요`;
+    showUndoToast(msg, ()=>undoCopies(toDk,[copy.id]));
+  }
+  return copy;
+}
+// 복사 취소 — 방금 만든 복사본만 지운다(원본은 그대로)
+function undoCopies(toDk, ids){
+  if(!tasks[toDk]) return;
+  const set=new Set(ids);
+  tasks[toDk]=tasks[toDk].filter(x=>!set.has(x.id));
+  if(!tasks[toDk].length) delete tasks[toDk];
+  saveTasks(toDk); render();
+}
 // 반복 일정 이동 범위 묻기: 'one'(이 회차만) / 'all'(전체 시작일 변경) / null(취소)
 function askRepeatMoveScope(cb){
   const ov=el('div','modal-overlay'); const box=el('div','modal-box'); box.style.maxWidth='320px';
@@ -1111,6 +1180,83 @@ function openMovePopup(anchor, fromDk, taskId, repCtx){
   anchor.appendChild(popup);
   activeMovePopup=popup;
   setTimeout(()=>document.addEventListener('click',closeMovePopup,{once:true}),0);
+}
+
+// ── 복사 대상 날짜 고르기 팝업 ──
+let activeCopyPopup=null;
+function closeCopyPopup(){ if(activeCopyPopup){activeCopyPopup.remove();activeCopyPopup=null;} }
+// items: [{icon,label,dk}] · onPick(toDk) · upward면 위쪽으로 펼침(하단 고정 바 기준)
+function buildDatePickPopup(anchor, items, onPick, upward){
+  closeCopyPopup(); closeMovePopup();
+  const popup=el('div','move-popup'+(upward?' up':''));
+  items.forEach(opt=>{
+    const btn=el('button','move-opt');
+    const d=parseDk(opt.dk);
+    btn.innerHTML=`<span>${opt.icon}</span><span>${opt.label}</span><span class="move-opt-date">${d.getMonth()+1}/${d.getDate()}</span>`;
+    btn.onclick=e=>{e.stopPropagation();closeCopyPopup();onPick(opt.dk);};
+    popup.appendChild(btn);
+  });
+  const div=document.createElement('div'); div.className='move-popup-divider'; popup.appendChild(div);
+  const pickBtn=el('button','move-opt');
+  const inp=document.createElement('input');
+  inp.type='date'; inp.style.cssText='border:none;background:none;font-size:12px;color:var(--text);font-family:inherit;cursor:pointer;outline:none;width:100%';
+  inp.onclick=e=>e.stopPropagation();
+  inp.onchange=()=>{ if(!inp.value) return; closeCopyPopup(); onPick(inp.value); };
+  const _pi=el('span'); _pi.innerHTML='<svg class="ic" width="13" height="13"><use href="#i-calendar"/></svg>'; pickBtn.appendChild(_pi);
+  pickBtn.appendChild(el('span',null,{textContent:'날짜 선택'}));
+  pickBtn.appendChild(inp);
+  pickBtn.onclick=e=>{e.stopPropagation();inp.showPicker&&inp.showPicker();};
+  popup.appendChild(pickBtn);
+  anchor.style.position='relative';
+  anchor.appendChild(popup);
+  activeCopyPopup=popup;
+  setTimeout(()=>document.addEventListener('click',closeCopyPopup,{once:true}),0);
+  return popup;
+}
+// 할 일 하나 복사 — 같은 날 복제 / 다음 날 / 다음 주 같은 요일 / 직접 선택
+function openCopyPopup(anchor, dk, task, repCtx){
+  if(READ_ONLY) return;
+  const shift=n=>{ const d=parseDk(dk); d.setDate(d.getDate()+n); return dateKey(d); };
+  const items=[
+    {icon:'📄', label:'같은 날짜에 복제', dk:dk},
+    {icon:'☀️', label:'다음 날',          dk:shift(1)},
+    {icon:'📆', label:'다음 주 같은 요일', dk:shift(7)},
+  ];
+  let keepRepeat=false;
+  const hasRepeat=!!(task.repeat&&task.repeat!=='none')||!!(repCtx&&repCtx.isRepeatInst);
+  const popup=buildDatePickPopup(anchor, items, toDk=>{
+    copyTaskTo(dk, task.id, toDk, keepRepeat, repCtx||null);
+  });
+  if(hasRepeat){
+    const div=document.createElement('div'); div.className='move-popup-divider'; popup.appendChild(div);
+    const row=el('label','copy-repeat-row');
+    const cbx=document.createElement('input'); cbx.type='checkbox';
+    cbx.onchange=()=>{ keepRepeat=cbx.checked; };
+    row.onclick=e=>e.stopPropagation();
+    row.appendChild(cbx);
+    row.appendChild(el('span',null,{textContent:'반복 설정도 함께 복사'}));
+    popup.appendChild(row);
+    popup.appendChild(el('div','copy-hint',{textContent:'체크하지 않으면 그날 하루짜리 일정으로 복사돼요'}));
+  }
+}
+// 다중 선택 → 고른 날짜로 한 번에 복사
+function openBulkCopyPopup(anchor){
+  if(READ_ONLY||!bulkSelected.size) return;
+  const shift=n=>{ const d=today(); d.setDate(d.getDate()+n); return dateKey(d); };
+  const nextMon=(()=>{ const d=today(); d.setDate(d.getDate()+((8-d.getDay())%7||7)); return dateKey(d); })();
+  const items=[
+    {icon:'📌', label:'오늘',           dk:dateKey(today())},
+    {icon:'☀️', label:'내일',           dk:shift(1)},
+    {icon:'📆', label:'다음 주 월요일', dk:nextMon},
+  ];
+  buildDatePickPopup(anchor, items, toDk=>{
+    const ids=[];
+    bulkForEach((l,i,dk)=>{ const c=copyTaskTo(dk, l[i].id, toDk, false, null, true); if(c) ids.push(c.id); });
+    exitSelectMode();   // render() 포함
+    if(!ids.length) return;
+    const d=parseDk(toDk);
+    showUndoToast(`${ids.length}개를 ${d.getMonth()+1}/${d.getDate()}로 복사했어요`, ()=>undoCopies(toDk,ids));
+  }, true);
 }
 
 // ── Edit modal ──
@@ -1451,8 +1597,9 @@ const GUIDE_SECTIONS=[
     ['🍅','집중 타이머','25분 포모도로 타이머를 시작해요.'],
     ['✏️','수정','내용·색상·반복을 바꿀 수 있어요.'],
     ['📅','날짜 이동','다른 날짜로 옮길 수 있어요.'],
+    ['📄','복사','같은 내용을 다른 날짜에 복사해요. 하위 항목·메모도 같이 복사되고, 완료 표시는 초기화돼요.'],
     ['✕','삭제','휴지통으로 이동해요. 30일 안에 복구할 수 있어요.'],
-    ['🖱','드래그','끌어서 다른 날짜로 옮기거나 순서를 바꿀 수 있어요.'],
+    ['🖱','드래그','끌어서 다른 날짜로 옮기거나 순서를 바꿀 수 있어요. Ctrl(Alt)을 누른 채 끌면 옮기지 않고 복사돼요.'],
     ['＋','하위 항목','체크리스트를 만들 수 있어요. 진행률도 표시돼요. 반복 일정의 하위 항목은 전체 반복/이 날짜에만 중 선택할 수 있어요.'],
   ]},
   { title:'📝 메모', items:[
@@ -1477,7 +1624,7 @@ const GUIDE_SECTIONS=[
   ]},
   { title:'⋯ 더보기', items:[
     ['📑','템플릿','자주 쓰는 할 일을 저장해두고 한 번에 추가해요.'],
-    ['☑️','여러 개 선택','한 번에 완료·삭제할 수 있어요.'],
+    ['☑️','여러 개 선택','한 번에 완료·복사·삭제할 수 있어요.'],
     ['📝','메모 전체보기','모든 메모를 한눈에 볼 수 있어요.'],
     ['🗑','휴지통','삭제한 할 일을 30일 안에 복구할 수 있어요.'],
     ['📤','내보내기','구글 캘린더나 아웃룩에서 쓸 수 있는 .ics 파일로 내보내요.'],
@@ -1493,7 +1640,7 @@ const GUIDE_SECTIONS=[
   ]},
 ];
 // 가이드 이모지 → SVG 아이콘 매핑 (매핑 없는 것만 이모지 유지 — 색 점 🔴 등 의미 있는 것)
-const GUIDE_ICON_MAP={'👤':'user','☁️':'cloud-up','📱':'phone','📋':'calendar','📅':'columns','🗓':'grid','📆':'grid9','📊':'gantt','🎯':'target','⌨️':'keyboard','🕐':'clock','🕘':'history','🎨':'palette','🔄':'repeat','#️⃣':'hash','★':'star','🍅':'timer','✏️':'pencil','✕':'x','🖱':'mouse','＋':'plus','📝':'note','✍️':'pencil','📷':'image','🔗':'link','🌅':'sunrise','⏰':'clock','🌆':'moon','⏱':'sliders','💡':'bulb','🔎':'search','🎚':'sliders','🏷':'tag','👁':'eye','☑️':'check-sq','🗑':'trash','📤':'upload','💾':'save','📍':'pin','🔔':'bell','📑':'clipboard'};
+const GUIDE_ICON_MAP={'👤':'user','☁️':'cloud-up','📱':'phone','📋':'calendar','📅':'columns','🗓':'grid','📆':'grid9','📊':'gantt','🎯':'target','⌨️':'keyboard','🕐':'clock','🕘':'history','🎨':'palette','🔄':'repeat','#️⃣':'hash','★':'star','🍅':'timer','✏️':'pencil','✕':'x','🖱':'mouse','＋':'plus','📝':'note','✍️':'pencil','📷':'image','🔗':'link','🌅':'sunrise','⏰':'clock','🌆':'moon','⏱':'sliders','💡':'bulb','🔎':'search','🎚':'sliders','🏷':'tag','👁':'eye','☑️':'check-sq','🗑':'trash','📤':'upload','💾':'save','📍':'pin','🔔':'bell','📑':'clipboard','📄':'copy'};
 function renderGuide(){
   const body=document.getElementById('guideBody');
   body.innerHTML='';
@@ -1988,6 +2135,10 @@ function buildTaskItem(dk,task,isSub,parentId,isRepeatInst,originDk,instanceDk,a
         try{
           const data=JSON.parse(e.dataTransfer.getData('application/json'));
           if(!data||!data.id||data.id===task.id)return;
+          if((e.ctrlKey||e.altKey||e.metaKey)&&data.dk!==dk){
+            copyTaskTo(data.dk, data.id, dk, false, data.isRepeat?{isRepeatInst:true, originDk:data.dk, instanceDk:data.instanceDk}:null);
+            return;
+          }
           if(data.dk===dk&&!data.isRepeat){reorderTask(dk,data.id,task.id);}
           else if(data.isRepeat){
             askRepeatMoveScope(scope=>{
@@ -2200,6 +2351,9 @@ function buildTaskItem(dk,task,isSub,parentId,isRepeatInst,originDk,instanceDk,a
   trayItem('calendar','다른 날짜로 이동',null,()=>{
     openMovePopup(actionsWrap, dk, task.id, isRepeatInst?{isRepeatInst:true, originDk, instanceDk}:null);
   });
+  trayItem('copy','복사',null,()=>{
+    openCopyPopup(actionsWrap, dk, task, isRepeatInst?{isRepeatInst:true, originDk, instanceDk}:null);
+  });
   if(!isRepeatInst) trayItem('skip','다음 영업일로 미루기',null,()=>postponeTask(dk,task.id));
   trayItem('msg','댓글',null,()=>openComments(dk,task.id,isRepeatInst,originDk));
   if(navigator.share) trayItem('share','공유하기',null,()=>{
@@ -2320,6 +2474,11 @@ function buildDayCol(date,dayIdx){
     try{
       const data=JSON.parse(e.dataTransfer.getData('application/json'));
       if(!data||!data.dk||!data.id||data.dk===dk) return;
+      // Ctrl/Alt를 누른 채 끌면 옮기지 않고 복사
+      if(e.ctrlKey||e.altKey||e.metaKey){
+        copyTaskTo(data.dk, data.id, dk, false, data.isRepeat?{isRepeatInst:true, originDk:data.dk, instanceDk:data.instanceDk}:null);
+        return;
+      }
       if(data.isRepeat){
         askRepeatMoveScope(scope=>{
           if(scope==='one') moveRepeatInstanceOne(data.dk, data.id, data.instanceDk, dk);
@@ -5122,6 +5281,8 @@ function bulkForEach(fn) {
   if (done) done.onclick = () => { if (!bulkSelected.size) return; bulkForEach((l, i) => { if (!l[i].checked) { l[i].checked = true; l[i].completedAt = Date.now(); } }); saveTasks(); exitSelectMode(); };
   const undone = document.getElementById('bulkUndoneBtn');
   if (undone) undone.onclick = () => { if (!bulkSelected.size) return; bulkForEach((l, i) => { if (l[i].checked) { l[i].checked = false; } }); saveTasks(); exitSelectMode(); };
+  const cpy = document.getElementById('bulkCopyBtn');
+  if (cpy) cpy.onclick = (e) => { if (!bulkSelected.size) return; e.stopPropagation(); openBulkCopyPopup(cpy); };
   const del = document.getElementById('bulkDeleteBtn');
   if (del) del.onclick = () => { if (!bulkSelected.size) return; if (!confirm(`선택한 ${bulkSelected.size}개를 삭제할까요? (휴지통에 30일 보관)`)) return; bulkForEach((l, i, dk) => { const removed = l.splice(i, 1)[0]; addToTrash(dk, removed, null); }); saveTasks(); exitSelectMode(); };
 })();
